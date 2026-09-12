@@ -1,5 +1,6 @@
 import { TEACHER_ROSTER } from '../data/roster.js';
 import { getAttendance, saveAttendance, todayRiyadh, formatRiyadhDisplay } from '../db/idb.js';
+import { scheduleDriveSync } from '../sync/driveSync.js';
 
 const STATUSES = [
   { key: 'on_time', label: 'On time', cls: 'btn-ontime' },
@@ -76,6 +77,7 @@ export async function renderAttendance(root) {
         b.addEventListener('click', async () => {
           marks = { ...marks, [person.id]: st.key };
           await saveAttendance(date, marks);
+          scheduleDriveSync('attendance');
           paint();
         });
         btns.appendChild(b);

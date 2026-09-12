@@ -260,3 +260,6 @@ button { cursor: pointer; touch-action: manipulation; }
 @media (min-width: 600px) {
   .status-btn { min-height: 72px; font-size: 1.15rem; }
 }
+
+.sync-status p { margin: 6px 0; }
+.sync-panel .form-actions { display: flex; }

@@ -112,3 +112,24 @@ No Git remote required. Does **not** call external Admissions sheets.
 ## Privacy / data
 
 All attendance marks, incidents, and photos stay on the device. Clearing site data wipes them.
+
+
+## Drive sync
+
+Attendance and behavior can auto-upload to the **Waad Ops Drive** hub when Google Drive is connected in the **Sync** tab.
+
+Folders:
+- Daily attendance CSV → `01_Assembly_Attendance/Daily_CSV`
+- Behavior exports → `05_App_Exports`
+
+### Enable on GitHub Pages
+
+1. Google Cloud Console → enable **Google Drive API**.
+2. OAuth Web client → Authorized JavaScript origins:
+   - `https://alaatf96-spec.github.io`
+   - `http://localhost:5173` (dev)
+3. Set repo secret `VITE_GOOGLE_CLIENT_ID` (same client ID) so Pages builds bake it in.
+4. On phone: open app → **Sync** → **Connect Google Drive** (allowlist still `a.ferjani@waadacademy.edu.sa` for sign-in).
+5. Mark attendance; after ~8s it uploads, or tap **Sync attendance now**.
+
+Without the client ID in the build, device unlock still works; Sync tab explains the missing config.

@@ -10,6 +10,7 @@ import {
   todayRiyadh,
   formatRiyadhDisplay
 } from '../db/idb.js';
+import { scheduleDriveSync } from '../sync/driveSync.js';
 
 export async function renderBehavior(root) {
   const wrap = document.createElement('section');
@@ -18,7 +19,7 @@ export async function renderBehavior(root) {
     <header class="panel-head">
       <div>
         <h2>Behavior tracker · G4–6</h2>
-        <p class="muted">Incidents, consequences, pledges — local only</p>
+        <p class="muted">Incidents, consequences, pledges — syncs to Drive when connected</p>
       </div>
       <div class="panel-actions">
         <button type="button" class="btn btn-primary" id="beh-add">+ Incident</button>
@@ -163,6 +164,7 @@ function openForm(slot, onSaved) {
       createdAt: new Date().toISOString()
     };
     await saveIncident(incident);
+    scheduleDriveSync('behavior');
     toast('Incident saved');
     onSaved();
   });

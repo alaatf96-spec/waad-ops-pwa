@@ -15,6 +15,7 @@ import {
 } from './auth/auth.js';
 import { renderAttendance } from './attendance/attendance.js';
 import { renderBehavior } from './behavior/behavior.js';
+import { renderSync } from './sync/driveSync.js';
 
 const app = document.getElementById('app');
 
@@ -152,6 +153,7 @@ async function showApp() {
     <nav class="tabs" role="tablist">
       <button type="button" class="tab-btn is-active" data-tab="attendance" role="tab">Assembly</button>
       <button type="button" class="tab-btn" data-tab="behavior" role="tab">Behavior</button>
+      <button type="button" class="tab-btn" data-tab="sync" role="tab">Sync</button>
     </nav>
     <main class="main" id="main"></main>
   `;
@@ -168,7 +170,8 @@ async function showApp() {
     tabs.forEach((t) => t.classList.toggle('is-active', t.dataset.tab === name));
     main.innerHTML = '';
     if (name === 'attendance') await renderAttendance(main);
-    else await renderBehavior(main);
+    else if (name === 'behavior') await renderBehavior(main);
+    else await renderSync(main);
   }
 
   tabs.forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
