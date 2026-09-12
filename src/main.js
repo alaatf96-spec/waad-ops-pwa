@@ -15,7 +15,7 @@ import {
 } from './auth/auth.js';
 import { renderAttendance } from './attendance/attendance.js';
 import { renderBehavior } from './behavior/behavior.js';
-import { renderSync } from './sync/driveSync.js';
+import { renderSync, startIdleUploadWatcher } from './sync/driveSync.js';
 
 const app = document.getElementById('app');
 
@@ -176,6 +176,7 @@ async function showApp() {
 
   tabs.forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
   await switchTab('attendance');
+  startIdleUploadWatcher();
 }
 
 function escapeHtml(s) {

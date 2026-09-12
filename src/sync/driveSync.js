@@ -1,11 +1,19 @@
 /**
- * Google Drive sync for Waad Ops (drive.file scope).
- * Needs VITE_GOOGLE_CLIENT_ID + Drive API enabled + GIS token client.
+ * Drive sync for Waad Ops.
+ * Primary: Apps Script webhook (no OAuth client needed on phone).
+ * Fallback: GIS drive.file token client when VITE_GOOGLE_CLIENT_ID is set.
  */
 import { TEACHER_ROSTER, STUDENT_ROSTER } from '../data/roster.js';
 import { getAttendance, listIncidents, todayRiyadh, idbGet, idbSet } from '../db/idb.js';
 import { getGoogleClientId, isGoogleConfigured } from '../auth/auth.js';
-import { DRIVE_FOLDERS, DRIVE_SCOPE, DRIVE_LINKS } from './driveConfig.js';
+import {
+  DRIVE_FOLDERS,
+  DRIVE_SCOPE,
+  DRIVE_LINKS,
+  DEFAULT_UPLOAD_URL,
+  DEFAULT_UPLOAD_TOKEN,
+  IDLE_UPLOAD_MS
+} from './driveConfig.js';
 
 const TOKEN_LS = 'waad_ops_drive_token';
 const META_KEY = 'driveSyncMeta';
@@ -14,10 +22,15 @@ const PENDING_KEY = 'driveSyncPending';
 let tokenClient = null;
 let cachedToken = null;
 let debounceTimer = null;
+let idleTimer = null;
 const listeners = new Set();
 
 export function getDriveLinks() {
   return DRIVE_LINKS;
+}
+
+export function hasWebhookUpload() {
+  return !!(DEFAULT_UPLOAD_URL && DEFAULT_UPLOAD_TOKEN && !DEFAULT_UPLOAD_URL.includes('REPLACE'));
 }
 
 export function subscribeSyncStatus(fn) {
@@ -33,8 +46,9 @@ export async function getSyncStatus() {
   const meta = (await idbGet(META_KEY)) || {};
   const pending = (await idbGet(PENDING_KEY)) || { attendance: false, behavior: false };
   return {
-    configured: isGoogleConfigured(),
-    connected: !!getAccessToken(),
+    configured: isGoogleConfigured() || hasWebhookUpload(),
+    mode: hasWebhookUpload() ? 'webhook' : isGoogleConfigured() ? 'oauth' : 'none',
+    connected: hasWebhookUpload() || !!getAccessToken(),
     lastAttendanceAt: meta.lastAttendanceAt || null,
     lastBehaviorAt: meta.lastBehaviorAt || null,
     lastError: meta.lastError || null,
@@ -93,8 +107,12 @@ function loadGisScript() {
 }
 
 export async function connectDrive({ interactive = true } = {}) {
+  if (hasWebhookUpload()) {
+    emit();
+    return 'webhook';
+  }
   if (!isGoogleConfigured()) {
-    throw new Error('Set VITE_GOOGLE_CLIENT_ID and rebuild to enable Drive sync.');
+    throw new Error('Upload relay not ready yet. Use Export CSV for now.');
   }
   await loadGisScript();
   if (!window.google?.accounts?.oauth2) throw new Error('Google OAuth2 not available');
@@ -130,32 +148,23 @@ export function disconnectDrive() {
 }
 
 async function ensureToken() {
+  if (hasWebhookUpload()) return null;
   const t = getAccessToken();
   if (t) return t;
   return connectDrive({ interactive: true });
 }
 
-async function driveFetch(path, { method = 'GET', headers = {}, body, raw } = {}) {
-  const token = await ensureToken();
-  const res = await fetch(`https://www.googleapis.com/drive/v3${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, ...headers },
-    body
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Drive ${method} ${path}: ${res.status} ${text.slice(0, 200)}`);
-  }
-  if (raw) return res;
-  if (res.status === 204) return null;
-  return res.json();
-}
-
 async function findFileInFolder(folderId, name) {
+  const token = await ensureToken();
   const q = encodeURIComponent(
     `name='${name.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed=false`
   );
-  const data = await driveFetch(`/files?q=${q}&fields=files(id,name)&pageSize=5&spaces=drive`);
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=5&spaces=drive`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error(`Drive search failed: ${res.status}`);
+  const data = await res.json();
   return data.files?.[0] || null;
 }
 
@@ -187,6 +196,41 @@ export async function uploadOrUpdateFile({ folderId, name, blob, mimeType }) {
   return res.json();
 }
 
+async function uploadViaWebhook({ kind, name, content, mimeType }) {
+  if (!hasWebhookUpload()) throw new Error('Webhook not configured');
+  // Apps Script web apps return 302 to an echo URL after doPost.
+  // Following that redirect turns POST→GET and breaks; treat 302/opaqueredirect as success.
+  const res = await fetch(DEFAULT_UPLOAD_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      token: DEFAULT_UPLOAD_TOKEN,
+      kind,
+      name,
+      content,
+      mimeType: mimeType || 'text/csv'
+    }),
+    redirect: 'manual'
+  });
+  if (res.type === 'opaqueredirect' || res.status === 0 || res.status === 302 || res.status === 301) {
+    return { ok: true, name };
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Upload relay HTTP ${res.status}: ${text.slice(0, 160)}`);
+  }
+  const text = await res.text();
+  try {
+    const data = JSON.parse(text);
+    if (!data.ok) throw new Error(data.error || 'Upload relay failed');
+    return data;
+  } catch (e) {
+    if (e.message && e.message.includes('relay')) throw e;
+    // Non-JSON 200 still ok if body empty
+    return { ok: true, name };
+  }
+}
+
 function csvEscape(c) {
   return `"${String(c ?? '').replace(/"/g, '""')}"`;
 }
@@ -206,32 +250,14 @@ export function buildAttendanceCsv(date, marks) {
 
 export function buildIncidentsCsv(incidents) {
   const header = [
-    'ID',
-    'Date',
-    'StudentID',
-    'StudentName',
-    'Grade',
-    'Color',
-    'Type',
-    'Consequence',
-    'Pledge',
-    'HasPhoto',
-    'CreatedAt'
+    'ID', 'Date', 'StudentID', 'StudentName', 'Grade', 'Color',
+    'Type', 'Consequence', 'Pledge', 'HasPhoto', 'CreatedAt'
   ];
   const rows = incidents.map((inc) => {
     const s = STUDENT_ROSTER.find((x) => x.id === inc.studentId);
     return [
-      inc.id,
-      inc.date,
-      inc.studentId,
-      s?.name || '',
-      s?.grade || '',
-      s?.color || '',
-      inc.type,
-      inc.consequence,
-      inc.pledge || '',
-      inc.photoDataUrl ? 'yes' : 'no',
-      inc.createdAt || ''
+      inc.id, inc.date, inc.studentId, s?.name || '', s?.grade || '', s?.color || '',
+      inc.type, inc.consequence, inc.pledge || '', inc.photoDataUrl ? 'yes' : 'no', inc.createdAt || ''
     ];
   });
   return '\uFEFF' + [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n');
@@ -253,15 +279,21 @@ export async function syncAttendanceNow(date = todayRiyadh()) {
   try {
     const marks = await getAttendance(date);
     const csv = buildAttendanceCsv(date, marks);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const file = await uploadOrUpdateFile({
-      folderId: DRIVE_FOLDERS.dailyCsv,
-      name: `assembly-attendance-${date}.csv`,
-      blob,
-      mimeType: 'text/csv'
-    });
+    const name = `assembly-attendance-${date}.csv`;
+    let file;
+    if (hasWebhookUpload()) {
+      file = await uploadViaWebhook({ kind: 'attendance', name, content: csv, mimeType: 'text/csv' });
+    } else {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      file = await uploadOrUpdateFile({
+        folderId: DRIVE_FOLDERS.dailyCsv,
+        name,
+        blob,
+        mimeType: 'text/csv'
+      });
+    }
     await setPending({ attendance: false });
-    await setMeta({ lastAttendanceAt: new Date().toISOString(), lastError: null, lastAttendanceFileId: file.id });
+    await setMeta({ lastAttendanceAt: new Date().toISOString(), lastError: null, lastAttendanceFileId: file.fileId || file.id });
     return file;
   } catch (e) {
     await setPending({ attendance: true });
@@ -274,26 +306,28 @@ export async function syncBehaviorNow(date = todayRiyadh()) {
   try {
     const incidents = await listIncidents();
     const csv = buildIncidentsCsv(incidents);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const file = await uploadOrUpdateFile({
-      folderId: DRIVE_FOLDERS.appExports,
-      name: `behavior-incidents-${date}.csv`,
-      blob,
-      mimeType: 'text/csv'
-    });
-    // also dump JSON snapshot (no photos to keep small — strip data URLs)
-    const slim = incidents.map(({ photoDataUrl, ...rest }) => ({
-      ...rest,
-      hasPhoto: !!photoDataUrl
-    }));
-    await uploadOrUpdateFile({
-      folderId: DRIVE_FOLDERS.appExports,
-      name: `behavior-incidents-${date}.json`,
-      blob: new Blob([JSON.stringify(slim, null, 2)], { type: 'application/json' }),
-      mimeType: 'application/json'
-    });
+    const name = `behavior-incidents-${date}.csv`;
+    let file;
+    if (hasWebhookUpload()) {
+      file = await uploadViaWebhook({ kind: 'behavior', name, content: csv, mimeType: 'text/csv' });
+      const slim = incidents.map(({ photoDataUrl, ...rest }) => ({ ...rest, hasPhoto: !!photoDataUrl }));
+      await uploadViaWebhook({
+        kind: 'behavior',
+        name: `behavior-incidents-${date}.json`,
+        content: JSON.stringify(slim, null, 2),
+        mimeType: 'application/json'
+      });
+    } else {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      file = await uploadOrUpdateFile({
+        folderId: DRIVE_FOLDERS.appExports,
+        name,
+        blob,
+        mimeType: 'text/csv'
+      });
+    }
     await setPending({ behavior: false });
-    await setMeta({ lastBehaviorAt: new Date().toISOString(), lastError: null, lastBehaviorFileId: file.id });
+    await setMeta({ lastBehaviorAt: new Date().toISOString(), lastError: null, lastBehaviorFileId: file.fileId || file.id });
     return file;
   } catch (e) {
     await setPending({ behavior: true });
@@ -302,10 +336,18 @@ export async function syncBehaviorNow(date = todayRiyadh()) {
   }
 }
 
+/** Upload both attendance + behavior (used by Upload button + idle). */
+export async function uploadAllNow() {
+  const att = await syncAttendanceNow();
+  const beh = await syncBehaviorNow();
+  return { att, beh };
+}
+
 export function scheduleDriveSync(kind) {
   setPending(kind === 'behavior' ? { behavior: true } : { attendance: true });
-  if (!getAccessToken()) {
+  if (!hasWebhookUpload() && !getAccessToken()) {
     emit();
+    bumpIdleTimer();
     return;
   }
   clearTimeout(debounceTimer);
@@ -313,10 +355,48 @@ export function scheduleDriveSync(kind) {
     try {
       if (kind === 'behavior') await syncBehaviorNow();
       else await syncAttendanceNow();
-    } catch {
-      /* status already recorded */
-    }
+    } catch { /* status recorded */ }
   }, 8000);
+  bumpIdleTimer();
+}
+
+/** After 5 minutes of no taps, auto-upload pending data. */
+export function bumpIdleTimer() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(async () => {
+    try {
+      const pending = (await idbGet(PENDING_KEY)) || {};
+      if (!hasWebhookUpload() && !getAccessToken()) return;
+      if (pending.attendance || pending.behavior || true) {
+        // Always push current day snapshot after idle — cheap and reliable
+        await uploadAllNow();
+        toast('Uploaded to Drive (idle 5 min)');
+      }
+    } catch (e) {
+      toast(e.message || 'Idle upload failed');
+    }
+  }, IDLE_UPLOAD_MS);
+}
+
+export function startIdleUploadWatcher() {
+  const reset = () => bumpIdleTimer();
+  ['pointerdown', 'keydown', 'touchstart', 'visibilitychange'].forEach((ev) => {
+    document.addEventListener(ev, reset, { passive: true });
+  });
+  bumpIdleTimer();
+}
+
+function toast(msg) {
+  let el = document.querySelector('.toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2800);
 }
 
 export async function renderSync(root) {
@@ -326,19 +406,19 @@ export async function renderSync(root) {
     <header class="panel-head">
       <div>
         <h2>Drive sync</h2>
-        <p class="muted">Pushes attendance CSV + behavior exports to Waad Ops Drive</p>
+        <p class="muted">Uploads attendance + behavior to Waad Ops Drive</p>
       </div>
     </header>
     <div class="sync-status card-form" id="sync-status"></div>
     <div class="form-actions" style="flex-wrap:wrap;gap:8px;margin-top:12px">
-      <button type="button" class="btn btn-primary" id="sync-connect">Connect Google Drive</button>
-      <button type="button" class="btn btn-secondary" id="sync-att">Sync attendance now</button>
-      <button type="button" class="btn btn-secondary" id="sync-beh">Sync behavior now</button>
+      <button type="button" class="btn btn-primary" id="sync-upload">Upload to Drive</button>
+      <button type="button" class="btn btn-secondary" id="sync-connect">Connect (OAuth)</button>
       <button type="button" class="btn btn-secondary" id="sync-disconnect">Disconnect</button>
     </div>
     <p class="muted" style="margin-top:12px" id="sync-msg"></p>
-    <p class="muted"><a href="${DRIVE_LINKS.dailyCsv}" target="_blank" rel="noopener">Open Daily_CSV folder</a>
-      · <a href="${DRIVE_LINKS.appExports}" target="_blank" rel="noopener">Open App_Exports</a></p>
+    <p class="muted">Auto-uploads ~8s after each save, and again after 5 minutes idle.</p>
+    <p class="muted"><a href="${DRIVE_LINKS.dailyCsv}" target="_blank" rel="noopener">Daily_CSV</a>
+      · <a href="${DRIVE_LINKS.appExports}" target="_blank" rel="noopener">App_Exports</a></p>
   `;
   root.appendChild(wrap);
   const statusEl = wrap.querySelector('#sync-status');
@@ -347,11 +427,10 @@ export async function renderSync(root) {
   async function paint() {
     const s = await getSyncStatus();
     statusEl.innerHTML = `
-      <p><strong>Client ID:</strong> ${s.configured ? 'configured in build' : 'missing — need VITE_GOOGLE_CLIENT_ID'}</p>
-      <p><strong>Drive token:</strong> ${s.connected ? 'connected' : 'not connected'}</p>
-      <p><strong>Last attendance sync:</strong> ${s.lastAttendanceAt || '—'}</p>
-      <p><strong>Last behavior sync:</strong> ${s.lastBehaviorAt || '—'}</p>
-      <p><strong>Pending:</strong> att=${s.pending.attendance ? 'yes' : 'no'} · beh=${s.pending.behavior ? 'yes' : 'no'}</p>
+      <p><strong>Mode:</strong> ${s.mode}</p>
+      <p><strong>Ready:</strong> ${s.connected ? 'yes' : 'no'}</p>
+      <p><strong>Last attendance:</strong> ${s.lastAttendanceAt || '—'}</p>
+      <p><strong>Last behavior:</strong> ${s.lastBehaviorAt || '—'}</p>
       ${s.lastError ? `<p class="err">${escapeHtml(s.lastError)}</p>` : ''}
     `;
   }
@@ -364,54 +443,39 @@ export async function renderSync(root) {
       .replace(/"/g, '&quot;');
   }
 
+  wrap.querySelector('#sync-upload').addEventListener('click', async () => {
+    msgEl.textContent = 'Uploading…';
+    msgEl.className = 'muted';
+    try {
+      await uploadAllNow();
+      msgEl.textContent = 'Uploaded attendance + behavior to Drive.';
+      msgEl.className = 'ok';
+      await paint();
+    } catch (e) {
+      msgEl.textContent = e.message || String(e);
+      msgEl.className = 'err';
+      await paint();
+    }
+  });
+
   wrap.querySelector('#sync-connect').addEventListener('click', async () => {
-    msgEl.textContent = '';
     try {
       await connectDrive({ interactive: true });
-      msgEl.textContent = 'Drive connected.';
+      msgEl.textContent = hasWebhookUpload() ? 'Webhook already ready.' : 'Drive connected.';
       msgEl.className = 'ok';
       await paint();
     } catch (e) {
       msgEl.textContent = e.message || String(e);
       msgEl.className = 'err';
-    }
-  });
-
-  wrap.querySelector('#sync-att').addEventListener('click', async () => {
-    msgEl.textContent = 'Syncing attendance…';
-    try {
-      await syncAttendanceNow();
-      msgEl.textContent = 'Attendance CSV uploaded to Daily_CSV.';
-      msgEl.className = 'ok';
-      await paint();
-    } catch (e) {
-      msgEl.textContent = e.message || String(e);
-      msgEl.className = 'err';
-      await paint();
-    }
-  });
-
-  wrap.querySelector('#sync-beh').addEventListener('click', async () => {
-    msgEl.textContent = 'Syncing behavior…';
-    try {
-      await syncBehaviorNow();
-      msgEl.textContent = 'Behavior export uploaded to App_Exports.';
-      msgEl.className = 'ok';
-      await paint();
-    } catch (e) {
-      msgEl.textContent = e.message || String(e);
-      msgEl.className = 'err';
-      await paint();
     }
   });
 
   wrap.querySelector('#sync-disconnect').addEventListener('click', async () => {
     disconnectDrive();
-    msgEl.textContent = 'Disconnected.';
+    msgEl.textContent = 'Disconnected OAuth token.';
     await paint();
   });
 
-  const unsub = subscribeSyncStatus(() => paint());
-  wrap.addEventListener('remove', () => unsub(), { once: true });
+  subscribeSyncStatus(() => paint());
   await paint();
 }

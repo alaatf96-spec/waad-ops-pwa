@@ -1,6 +1,6 @@
 import { TEACHER_ROSTER } from '../data/roster.js';
 import { getAttendance, saveAttendance, todayRiyadh, formatRiyadhDisplay } from '../db/idb.js';
-import { scheduleDriveSync } from '../sync/driveSync.js';
+import { scheduleDriveSync, uploadAllNow } from '../sync/driveSync.js';
 
 const STATUSES = [
   { key: 'on_time', label: 'On time', cls: 'btn-ontime' },
@@ -22,6 +22,7 @@ export async function renderAttendance(root) {
       </div>
       <div class="panel-actions">
         <button type="button" class="btn btn-secondary" id="att-today">Today</button>
+        <button type="button" class="btn btn-primary" id="att-upload">Upload</button>
         <button type="button" class="btn btn-secondary" id="att-export">Export CSV</button>
       </div>
     </header>
@@ -88,6 +89,21 @@ export async function renderAttendance(root) {
 
   wrap.querySelector('#att-today').addEventListener('click', () => reload(todayRiyadh()));
   wrap.querySelector('#att-export').addEventListener('click', () => exportCsv(date, marks));
+  wrap.querySelector('#att-upload').addEventListener('click', async () => {
+    const btn = wrap.querySelector('#att-upload');
+    const prev = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+    try {
+      await uploadAllNow();
+      btn.textContent = 'Uploaded ✓';
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
+    } catch (e) {
+      btn.textContent = 'Failed';
+      alert(e.message || String(e));
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
+    }
+  });
 
   await reload(date);
 }

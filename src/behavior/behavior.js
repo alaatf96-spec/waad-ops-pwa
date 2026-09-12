@@ -10,7 +10,7 @@ import {
   todayRiyadh,
   formatRiyadhDisplay
 } from '../db/idb.js';
-import { scheduleDriveSync } from '../sync/driveSync.js';
+import { scheduleDriveSync, uploadAllNow } from '../sync/driveSync.js';
 
 export async function renderBehavior(root) {
   const wrap = document.createElement('section');
@@ -22,6 +22,7 @@ export async function renderBehavior(root) {
         <p class="muted">Incidents, consequences, pledges — syncs to Drive when connected</p>
       </div>
       <div class="panel-actions">
+        <button type="button" class="btn btn-primary" id="beh-upload">Upload</button>
         <button type="button" class="btn btn-primary" id="beh-add">+ Incident</button>
       </div>
     </header>
@@ -92,6 +93,23 @@ export async function renderBehavior(root) {
       listEl.appendChild(card);
     });
   }
+
+  wrap.querySelector('#beh-upload').addEventListener('click', async () => {
+    const btn = wrap.querySelector('#beh-upload');
+    const prev = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+    try {
+      await uploadAllNow();
+      toast('Uploaded to Drive');
+      btn.textContent = 'Uploaded ✓';
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
+    } catch (e) {
+      toast(e.message || 'Upload failed');
+      btn.textContent = 'Failed';
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
+    }
+  });
 
   wrap.querySelector('#beh-add').addEventListener('click', () => {
     openForm(formSlot, async () => {
