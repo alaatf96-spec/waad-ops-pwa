@@ -8,9 +8,17 @@ const STATUSES = [
   { key: 'absent', label: 'Absent', cls: 'btn-absent' }
 ];
 
+function norm(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
 export async function renderAttendance(root) {
   let date = todayRiyadh();
   let marks = await getAttendance(date);
+  let query = '';
 
   const wrap = document.createElement('section');
   wrap.className = 'panel attendance-panel';
@@ -26,6 +34,9 @@ export async function renderAttendance(root) {
         <button type="button" class="btn btn-secondary" id="att-export">Export CSV</button>
       </div>
     </header>
+    <div class="search-bar">
+      <input type="search" id="att-search" placeholder="Search teacher…" autocomplete="off" enterkeyhint="search" />
+    </div>
     <div class="summary-bar" id="att-summary"></div>
     <div class="roster-list" id="att-list"></div>
   `;
@@ -34,6 +45,16 @@ export async function renderAttendance(root) {
   const listEl = wrap.querySelector('#att-list');
   const summaryEl = wrap.querySelector('#att-summary');
   const dateLabel = wrap.querySelector('#att-date-label');
+  const searchEl = wrap.querySelector('#att-search');
+
+  function filteredRoster() {
+    const q = norm(query).trim();
+    if (!q) return TEACHER_ROSTER;
+    return TEACHER_ROSTER.filter((p) => {
+      const hay = norm(`${p.name} ${p.role} ${p.grade || ''} ${p.id}`);
+      return hay.includes(q) || q.split(/\s+/).every((part) => hay.includes(part));
+    });
+  }
 
   async function reload(d) {
     date = d;
@@ -43,6 +64,7 @@ export async function renderAttendance(root) {
   }
 
   function paint() {
+    const roster = filteredRoster();
     const counts = { on_time: 0, late: 0, absent: 0, unset: 0 };
     TEACHER_ROSTER.forEach((p) => {
       const s = marks[p.id];
@@ -54,10 +76,15 @@ export async function renderAttendance(root) {
       <span class="chip chip-late">Late ${counts.late}</span>
       <span class="chip chip-absent">Absent ${counts.absent}</span>
       <span class="chip">Unset ${counts.unset}</span>
+      ${query.trim() ? `<span class="chip">Showing ${roster.length}/${TEACHER_ROSTER.length}</span>` : ''}
     `;
 
     listEl.innerHTML = '';
-    TEACHER_ROSTER.forEach((person) => {
+    if (!roster.length) {
+      listEl.innerHTML = `<p class="empty">No teachers match “${escapeHtml(query.trim())}”.</p>`;
+      return;
+    }
+    roster.forEach((person) => {
       const card = document.createElement('article');
       card.className = 'person-card';
       const current = marks[person.id] || '';
@@ -87,6 +114,11 @@ export async function renderAttendance(root) {
     });
   }
 
+  searchEl.addEventListener('input', () => {
+    query = searchEl.value;
+    paint();
+  });
+
   wrap.querySelector('#att-today').addEventListener('click', () => reload(todayRiyadh()));
   wrap.querySelector('#att-export').addEventListener('click', () => exportCsv(date, marks));
   wrap.querySelector('#att-upload').addEventListener('click', async () => {
@@ -106,6 +138,7 @@ export async function renderAttendance(root) {
   });
 
   await reload(date);
+  searchEl.focus({ preventScroll: true });
 }
 
 function exportCsv(date, marks) {

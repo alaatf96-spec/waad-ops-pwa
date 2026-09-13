@@ -12,7 +12,22 @@ import {
 } from '../db/idb.js';
 import { scheduleDriveSync, uploadAllNow } from '../sync/driveSync.js';
 
+function norm(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function matchStudent(s, q) {
+  if (!q) return true;
+  const hay = norm(`${s.name} ${s.grade} ${s.color} ${s.id}`);
+  return hay.includes(q) || q.split(/\s+/).every((part) => hay.includes(part));
+}
+
 export async function renderBehavior(root) {
+  let query = '';
+
   const wrap = document.createElement('section');
   wrap.className = 'panel behavior-panel';
   wrap.innerHTML = `
@@ -26,15 +41,14 @@ export async function renderBehavior(root) {
         <button type="button" class="btn btn-primary" id="beh-add">+ Incident</button>
       </div>
     </header>
+    <div class="search-bar">
+      <input type="search" id="beh-search" placeholder="Search student…" autocomplete="off" enterkeyhint="search" />
+    </div>
     <div class="filters">
       <label>
         Student
         <select id="beh-filter-student">
           <option value="">All students</option>
-          ${STUDENT_ROSTER.map(
-            (s) =>
-              `<option value="${s.id}">${escapeHtml(s.name)} (${s.grade} · ${s.color})</option>`
-          ).join('')}
         </select>
       </label>
     </div>
@@ -46,16 +60,46 @@ export async function renderBehavior(root) {
   const listEl = wrap.querySelector('#beh-list');
   const formSlot = wrap.querySelector('#beh-form-slot');
   const filterSel = wrap.querySelector('#beh-filter-student');
+  const searchEl = wrap.querySelector('#beh-search');
+
+  function filteredStudents() {
+    const q = norm(query).trim();
+    return STUDENT_ROSTER.filter((s) => matchStudent(s, q));
+  }
+
+  function refillFilterOptions(keepId) {
+    const students = filteredStudents();
+    const prev = keepId !== undefined ? keepId : filterSel.value;
+    filterSel.innerHTML = `<option value="">All students${query.trim() ? ` (matching ${students.length})` : ''}</option>`;
+    students.forEach((s) => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = `${s.name} (${s.grade} · ${s.color})`;
+      filterSel.appendChild(opt);
+    });
+    if (prev && [...filterSel.options].some((o) => o.value === prev)) {
+      filterSel.value = prev;
+    } else {
+      filterSel.value = '';
+    }
+  }
 
   async function refresh() {
     const sid = filterSel.value;
-    const rows = sid ? await listIncidentsByStudent(sid) : await listIncidents();
+    let rows = sid ? await listIncidentsByStudent(sid) : await listIncidents();
+    const q = norm(query).trim();
+    if (q && !sid) {
+      const ids = new Set(filteredStudents().map((s) => s.id));
+      rows = rows.filter((inc) => ids.has(inc.studentId));
+    }
     paintList(rows);
   }
 
   function paintList(rows) {
     if (!rows.length) {
-      listEl.innerHTML = `<p class="empty">No incidents yet. Tap <strong>+ Incident</strong>.</p>`;
+      listEl.innerHTML = query.trim()
+        ? `<p class="empty">No incidents for students matching “${escapeHtml(query.trim())}”.</p>`
+        : `<p class="empty">No incidents yet. Tap <strong>+ Incident</strong>.</p>`;
       return;
     }
     listEl.innerHTML = '';
@@ -94,6 +138,12 @@ export async function renderBehavior(root) {
     });
   }
 
+  searchEl.addEventListener('input', async () => {
+    query = searchEl.value;
+    refillFilterOptions();
+    await refresh();
+  });
+
   wrap.querySelector('#beh-upload').addEventListener('click', async () => {
     const btn = wrap.querySelector('#beh-upload');
     const prev = btn.textContent;
@@ -115,23 +165,24 @@ export async function renderBehavior(root) {
     openForm(formSlot, async () => {
       formSlot.innerHTML = '';
       await refresh();
-    });
+    }, query);
   });
   filterSel.addEventListener('change', refresh);
+  refillFilterOptions();
   await refresh();
+  searchEl.focus({ preventScroll: true });
 }
 
-function openForm(slot, onSaved) {
+function openForm(slot, onSaved, initialQuery = '') {
+  let formQuery = initialQuery || '';
   slot.innerHTML = `
     <form class="incident-form card-form" id="incident-form">
       <h3>New incident</h3>
+      <div class="search-bar" style="margin:0 0 10px">
+        <input type="search" id="inc-student-search" placeholder="Find student…" autocomplete="off" value="${escapeHtml(formQuery)}" />
+      </div>
       <label>Student
-        <select name="studentId" required>
-          ${STUDENT_ROSTER.map(
-            (s) =>
-              `<option value="${s.id}">${escapeHtml(s.name)} (${s.grade} · ${s.color})</option>`
-          ).join('')}
-        </select>
+        <select name="studentId" id="inc-student-select" required></select>
       </label>
       <label>Date
         <input type="date" name="date" required value="${todayRiyadh()}" />
@@ -159,6 +210,26 @@ function openForm(slot, onSaved) {
     </form>
   `;
 
+  const sel = slot.querySelector('#inc-student-select');
+  const sSearch = slot.querySelector('#inc-student-search');
+
+  function refillStudents() {
+    const q = norm(formQuery).trim();
+    const list = STUDENT_ROSTER.filter((s) => matchStudent(s, q));
+    const prev = sel.value;
+    sel.innerHTML = list.length
+      ? list.map((s) => `<option value="${s.id}">${escapeHtml(s.name)} (${s.grade} · ${s.color})</option>`).join('')
+      : '<option value="" disabled selected>No match</option>';
+    if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  }
+
+  sSearch.addEventListener('input', () => {
+    formQuery = sSearch.value;
+    refillStudents();
+  });
+  refillStudents();
+  sSearch.focus();
+
   slot.querySelector('#inc-cancel').addEventListener('click', () => {
     slot.innerHTML = '';
   });
@@ -166,6 +237,10 @@ function openForm(slot, onSaved) {
   slot.querySelector('#incident-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    if (!fd.get('studentId')) {
+      toast('Pick a student');
+      return;
+    }
     let photoDataUrl = null;
     const file = fd.get('photo');
     if (file && file.size) {

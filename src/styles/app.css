@@ -263,3 +263,20 @@ button { cursor: pointer; touch-action: manipulation; }
 
 .sync-status p { margin: 6px 0; }
 .sync-panel .form-actions { display: flex; }
+
+.search-bar {
+  margin: 0 0 12px;
+}
+.search-bar input[type="search"] {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1.5px solid #c8cde8;
+  border-radius: 12px;
+  font-size: 16px;
+  background: #fff;
+}
+.search-bar input[type="search"]:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(31, 194, 242, 0.25);
+}
