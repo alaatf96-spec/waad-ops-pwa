@@ -1,6 +1,6 @@
 import { TEACHER_ROSTER } from '../data/roster.js';
 import { getAttendance, saveAttendance, todayRiyadh, formatRiyadhDisplay } from '../db/idb.js';
-import { scheduleDriveSync, uploadAllNow } from '../sync/driveSync.js';
+import { scheduleDriveSync } from '../sync/driveSync.js';
 
 const STATUSES = [
   { key: 'on_time', label: 'On time', cls: 'btn-ontime' },
@@ -30,8 +30,6 @@ export async function renderAttendance(root) {
       </div>
       <div class="panel-actions">
         <button type="button" class="btn btn-secondary" id="att-today">Today</button>
-        <button type="button" class="btn btn-primary" id="att-upload">Upload</button>
-        <button type="button" class="btn btn-secondary" id="att-export">Export CSV</button>
       </div>
     </header>
     <div class="search-bar">
@@ -120,47 +118,9 @@ export async function renderAttendance(root) {
   });
 
   wrap.querySelector('#att-today').addEventListener('click', () => reload(todayRiyadh()));
-  wrap.querySelector('#att-export').addEventListener('click', () => exportCsv(date, marks));
-  wrap.querySelector('#att-upload').addEventListener('click', async () => {
-    const btn = wrap.querySelector('#att-upload');
-    const prev = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Uploading…';
-    try {
-      await uploadAllNow();
-      btn.textContent = 'Uploaded ✓';
-      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
-    } catch (e) {
-      btn.textContent = 'Failed';
-      alert(e.message || String(e));
-      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 2000);
-    }
-  });
 
   await reload(date);
   searchEl.focus({ preventScroll: true });
-}
-
-function exportCsv(date, marks) {
-  const header = ['Date', 'ID', 'Name', 'Role', 'Grade', 'Status'];
-  const rows = TEACHER_ROSTER.map((p) => [
-    date,
-    p.id,
-    p.name,
-    p.role,
-    p.grade || '',
-    marks[p.id] || ''
-  ]);
-  const bom = '\uFEFF';
-  const csv = bom + [header, ...rows]
-    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
-    .join('\r\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `waad-assembly-attendance-${date}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
 }
 
 function escapeHtml(s) {

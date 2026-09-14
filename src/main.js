@@ -7,22 +7,46 @@ import {
   hasPin,
   setPin,
   unlockWithDevice,
-  createUnlockLink,
   tryConsumeUnlockFromHash,
   mountGoogleButton,
-  isGoogleConfigured,
   ALLOWED_EMAIL
 } from './auth/auth.js';
 import { renderAttendance } from './attendance/attendance.js';
 import { renderBehavior } from './behavior/behavior.js';
-import { renderSync, startIdleUploadWatcher } from './sync/driveSync.js';
+import { uploadAllNow, startIdleUploadWatcher } from './sync/driveSync.js';
 
 const app = document.getElementById('app');
+let syncing = false;
+
+async function syncAfterUse(reason) {
+  if (syncing) return;
+  syncing = true;
+  try {
+    await uploadAllNow();
+    toast(`Synced to Drive (${reason})`);
+  } catch (e) {
+    toast(e.message || 'Sync failed — try again later');
+  } finally {
+    syncing = false;
+  }
+}
+
+function toast(msg) {
+  let el = document.querySelector('.toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2800);
+}
 
 async function boot() {
   const linkResult = await tryConsumeUnlockFromHash();
   if (linkResult?.error) {
-    // show on lock screen
     sessionStorage.setItem('waad_unlock_err', linkResult.error);
   }
   if (getSession()) {
@@ -44,7 +68,7 @@ async function showLock(errMsg) {
         <div class="brand-mark">W</div>
         <div>
           <h1>Waad Ops</h1>
-          <p class="sub" style="margin:0;opacity:.85">Assembly · Behavior · Local PWA</p>
+          <p class="sub" style="margin:0;opacity:.85">Assembly · Behavior</p>
         </div>
       </div>
       <p class="tagline">Aladdin Ferjani · ${ALLOWED_EMAIL}</p>
@@ -56,8 +80,8 @@ async function showLock(errMsg) {
       </div>
 
       <div class="lock-card">
-        <h2>Passwordless device unlock</h2>
-        <p class="muted">No remembered password. A device key is stored on this phone${pinExists ? ' with your 4-digit PIN' : ''}.</p>
+        <h2>Unlock this device</h2>
+        <p class="muted">Device key on this phone${pinExists ? ' + your 4-digit PIN' : ''}.</p>
         ${
           !pinExists
             ? `<label>Optional 4-digit PIN (set once)
@@ -73,24 +97,16 @@ async function showLock(errMsg) {
         }
         <p class="err" id="device-err"></p>
         <button type="button" class="btn btn-primary btn-block" id="btn-device-unlock" style="margin-top:12px">
-          Unlock this device
+          Unlock
         </button>
-        <p class="muted" style="margin-top:10px">${deviceReady ? 'Device key ready.' : 'Creating device key…'}</p>
-      </div>
-
-      <div class="lock-card">
-        <h2>Email me a one-time unlock link</h2>
-        <p class="muted">Simulated locally for demo — production needs a tiny backend to email the link.</p>
-        <button type="button" class="btn btn-cyan btn-block" id="btn-email-link">Generate unlock link</button>
-        <div id="email-link-out"></div>
+        <p class="muted" style="margin-top:10px">${deviceReady ? 'Device ready.' : 'Creating device key…'}</p>
       </div>
 
       ${errMsg ? `<p class="err" style="text-align:center">${escapeHtml(errMsg)}</p>` : ''}
     </div>
   `;
 
-  const host = document.getElementById('google-btn-host');
-  mountGoogleButton(host, {
+  mountGoogleButton(document.getElementById('google-btn-host'), {
     onSuccess: async () => {
       await ensureDeviceKey();
       await showApp();
@@ -117,24 +133,6 @@ async function showLock(errMsg) {
       errEl.textContent = e.message || String(e);
     }
   });
-
-  document.getElementById('btn-email-link').addEventListener('click', async () => {
-    const { url, expiresAt } = await createUnlockLink();
-    const out = document.getElementById('email-link-out');
-    out.innerHTML = `
-      <p class="ok">Demo link created (expires ${new Date(expiresAt).toLocaleString()}).</p>
-      <p class="muted">In production this would be emailed to ${ALLOWED_EMAIL}. Open it on this device:</p>
-      <div class="unlock-link-box"><a href="${url}">${url}</a></div>
-      <button type="button" class="btn btn-secondary btn-block" id="btn-copy-link" style="margin-top:8px">Copy link</button>
-    `;
-    document.getElementById('btn-copy-link').addEventListener('click', () => {
-      navigator.clipboard?.writeText(url);
-    });
-  });
-
-  if (!isGoogleConfigured()) {
-    // already shown setup steps inside mountGoogleButton
-  }
 }
 
 async function showApp() {
@@ -145,38 +143,78 @@ async function showApp() {
         <div class="brand-mark">W</div>
         <div>
           <h1>Waad Ops</h1>
-          <p class="sub">${escapeHtml(session?.name || 'Ops')} · ${escapeHtml(session?.method || '')}</p>
+          <p class="sub">${escapeHtml(session?.name || 'Ops')}</p>
         </div>
       </div>
       <button type="button" class="btn-lock" id="btn-lock" title="Lock">Lock</button>
     </header>
-    <nav class="tabs" role="tablist">
-      <button type="button" class="tab-btn is-active" data-tab="attendance" role="tab">Assembly</button>
-      <button type="button" class="tab-btn" data-tab="behavior" role="tab">Behavior</button>
-      <button type="button" class="tab-btn" data-tab="sync" role="tab">Sync</button>
-    </nav>
-    <main class="main" id="main"></main>
+    <main class="main main-home" id="main"></main>
   `;
 
-  document.getElementById('btn-lock').addEventListener('click', () => {
+  document.getElementById('btn-lock').addEventListener('click', async () => {
+    await syncAfterUse('lock');
     clearSession();
     showLock();
   });
 
-  const main = document.getElementById('main');
-  const tabs = [...document.querySelectorAll('.tab-btn')];
+  document.addEventListener('visibilitychange', onVisibility, { once: false });
+  window.addEventListener('pagehide', onPageHide, { once: false });
 
-  async function switchTab(name) {
-    tabs.forEach((t) => t.classList.toggle('is-active', t.dataset.tab === name));
-    main.innerHTML = '';
-    if (name === 'attendance') await renderAttendance(main);
-    else if (name === 'behavior') await renderBehavior(main);
-    else await renderSync(main);
-  }
-
-  tabs.forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
-  await switchTab('attendance');
   startIdleUploadWatcher();
+  await showHome();
+}
+
+function onVisibility() {
+  if (document.visibilityState === 'hidden') {
+    syncAfterUse('left app');
+  }
+}
+
+function onPageHide() {
+  syncAfterUse('close');
+}
+
+async function showHome() {
+  const main = document.getElementById('main');
+  main.className = 'main main-home';
+  main.innerHTML = `
+    <div class="home-dash">
+      <button type="button" class="home-tile home-tile-attendance" id="home-att">
+        <span class="home-tile-icon" aria-hidden="true">📋</span>
+        <span class="home-tile-title">Assembly attendance</span>
+        <span class="home-tile-sub">Morning staff roster · On time / Late / Absent</span>
+      </button>
+      <button type="button" class="home-tile home-tile-behavior" id="home-beh">
+        <span class="home-tile-icon" aria-hidden="true">🛡️</span>
+        <span class="home-tile-title">Behavior tracker</span>
+        <span class="home-tile-sub">G4–6 incidents · pledges · MoE draft</span>
+      </button>
+    </div>
+  `;
+  document.getElementById('home-att').addEventListener('click', () => openTool('attendance'));
+  document.getElementById('home-beh').addEventListener('click', () => openTool('behavior'));
+}
+
+async function openTool(name) {
+  const main = document.getElementById('main');
+  main.className = 'main';
+  main.innerHTML = `
+    <div class="tool-top">
+      <button type="button" class="btn btn-secondary" id="btn-back">← Home</button>
+      <span class="muted" id="sync-hint">Auto-syncs when you go Home</span>
+    </div>
+    <div id="tool-root"></div>
+  `;
+  const root = document.getElementById('tool-root');
+  document.getElementById('btn-back').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-back');
+    btn.disabled = true;
+    btn.textContent = 'Syncing…';
+    await syncAfterUse('done');
+    await showHome();
+  });
+  if (name === 'attendance') await renderAttendance(root);
+  else await renderBehavior(root);
 }
 
 function escapeHtml(s) {
