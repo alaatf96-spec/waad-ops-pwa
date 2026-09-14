@@ -117,10 +117,11 @@ export function todayRiyadh() {
   }).format(new Date());
 }
 
-export function formatRiyadhDisplay(isoDate) {
+export function formatRiyadhDisplay(isoDate, lang = 'en') {
   try {
     const d = new Date(isoDate + 'T12:00:00+03:00');
-    return new Intl.DateTimeFormat('en-GB', {
+    const locale = lang === 'ar' ? 'ar-SA' : 'en-GB';
+    return new Intl.DateTimeFormat(locale, {
       timeZone: 'Asia/Riyadh',
       weekday: 'short',
       day: 'numeric',

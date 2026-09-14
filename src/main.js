@@ -14,18 +14,29 @@ import {
 import { renderAttendance } from './attendance/attendance.js';
 import { renderBehavior } from './behavior/behavior.js';
 import { uploadAllNow, startIdleUploadWatcher } from './sync/driveSync.js';
+import { DRIVE_LINKS } from './sync/driveConfig.js';
+import {
+  getLang,
+  t,
+  applyDir,
+  langSwitcherHtml,
+  bindLangSwitcher
+} from './i18n/index.js';
 
 const app = document.getElementById('app');
 let syncing = false;
+let leaveHooksBound = false;
+let currentView = 'home'; // home | attendance | behavior
+let rerender = () => {};
 
-async function syncAfterUse(reason) {
+async function syncQuiet(reason) {
   if (syncing) return;
   syncing = true;
   try {
     await uploadAllNow();
-    toast(`Synced to Drive (${reason})`);
+    if (reason && reason !== 'leave') toast(`${t('synced')}`);
   } catch (e) {
-    toast(e.message || 'Sync failed — try again later');
+    if (reason && reason !== 'leave') toast(e.message || t('syncFailed'));
   } finally {
     syncing = false;
   }
@@ -44,7 +55,21 @@ function toast(msg) {
   el._t = setTimeout(() => el.classList.remove('show'), 2800);
 }
 
+function bindLeaveSync() {
+  if (leaveHooksBound) return;
+  leaveHooksBound = true;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') syncQuiet('leave');
+  });
+  window.addEventListener('pagehide', () => syncQuiet('leave'));
+  window.addEventListener('beforeunload', () => {
+    // fire-and-forget; browser may kill the promise
+    syncQuiet('leave');
+  });
+}
+
 async function boot() {
+  applyDir(getLang());
   const linkResult = await tryConsumeUnlockFromHash();
   if (linkResult?.error) {
     sessionStorage.setItem('waad_unlock_err', linkResult.error);
@@ -61,35 +86,36 @@ async function showLock(errMsg) {
   await ensureDeviceKey();
   const pinExists = await hasPin();
   const deviceReady = hasDeviceKey();
+  currentView = 'lock';
 
   app.innerHTML = `
     <div class="lock-screen">
       <div class="logo-row">
         <div class="brand-mark">W</div>
         <div>
-          <h1>Waad Ops</h1>
-          <p class="sub" style="margin:0;opacity:.85">Assembly · Behavior</p>
+          <h1>${t('appName')}</h1>
+          <p class="sub" style="margin:0;opacity:.85">${t('tagline')}</p>
         </div>
       </div>
-      <p class="tagline">Aladdin Ferjani · ${ALLOWED_EMAIL}</p>
+      <p class="tagline">${t('ownerLine')} · ${ALLOWED_EMAIL}</p>
 
       <div class="lock-card">
-        <h2>Continue with Google</h2>
+        <h2>${t('continueGoogle')}</h2>
         <div id="google-btn-host"></div>
         <p class="err" id="google-err"></p>
       </div>
 
       <div class="lock-card">
-        <h2>Unlock this device</h2>
-        <p class="muted">Device key on this phone${pinExists ? ' + your 4-digit PIN' : ''}.</p>
+        <h2>${t('unlockDevice')}</h2>
+        <p class="muted">${pinExists ? t('deviceKeyPinHint') : t('deviceKeyHint')}.</p>
         ${
           !pinExists
-            ? `<label>Optional 4-digit PIN (set once)
+            ? `<label>${t('optionalPin')}
                 <div class="pin-row">
                   <input id="pin-setup" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="····" autocomplete="off" />
                 </div>
               </label>`
-            : `<label>Enter PIN
+            : `<label>${t('enterPin')}
                 <div class="pin-row">
                   <input id="pin-enter" inputmode="numeric" maxlength="4" pattern="\\d{4}" placeholder="····" autocomplete="off" />
                 </div>
@@ -97,14 +123,17 @@ async function showLock(errMsg) {
         }
         <p class="err" id="device-err"></p>
         <button type="button" class="btn btn-primary btn-block" id="btn-device-unlock" style="margin-top:12px">
-          Unlock
+          ${t('unlock')}
         </button>
-        <p class="muted" style="margin-top:10px">${deviceReady ? 'Device ready.' : 'Creating device key…'}</p>
+        <p class="muted" style="margin-top:10px">${deviceReady ? t('deviceReady') : t('creatingKey')}</p>
       </div>
 
+      ${langSwitcherHtml('lang-switch-lock')}
       ${errMsg ? `<p class="err" style="text-align:center">${escapeHtml(errMsg)}</p>` : ''}
     </div>
   `;
+
+  bindLangSwitcher(app, () => showLock(errMsg));
 
   mountGoogleButton(document.getElementById('google-btn-host'), {
     onSuccess: async () => {
@@ -139,79 +168,106 @@ async function showApp() {
   const session = getSession();
   app.innerHTML = `
     <header class="app-header">
-      <div style="display:flex;align-items:center;gap:10px">
+      <button type="button" class="brand-home" id="btn-brand-home" title="${t('home')}">
         <div class="brand-mark">W</div>
-        <div>
-          <h1>Waad Ops</h1>
+        <div class="brand-text">
+          <h1>${t('appName')}</h1>
           <p class="sub">${escapeHtml(session?.name || 'Ops')}</p>
         </div>
+      </button>
+      <div class="header-actions">
+        <a class="btn-drive" id="hdr-drive" href="${DRIVE_LINKS.root}" target="_blank" rel="noopener">${t('drive')}</a>
+        <button type="button" class="btn-lock" id="btn-lock" title="${t('lock')}">${t('lock')}</button>
       </div>
-      <button type="button" class="btn-lock" id="btn-lock" title="Lock">Lock</button>
     </header>
     <main class="main main-home" id="main"></main>
   `;
 
+  document.getElementById('btn-brand-home').addEventListener('click', () => showHome());
   document.getElementById('btn-lock').addEventListener('click', async () => {
-    await syncAfterUse('lock');
+    await syncQuiet('lock');
     clearSession();
     showLock();
   });
 
-  document.addEventListener('visibilitychange', onVisibility, { once: false });
-  window.addEventListener('pagehide', onPageHide, { once: false });
-
+  bindLeaveSync();
   startIdleUploadWatcher();
+
+  rerender = async () => {
+    if (currentView === 'attendance') await openTool('attendance');
+    else if (currentView === 'behavior') await openTool('behavior');
+    else await showHome();
+  };
+
   await showHome();
 }
 
-function onVisibility() {
-  if (document.visibilityState === 'hidden') {
-    syncAfterUse('left app');
-  }
-}
-
-function onPageHide() {
-  syncAfterUse('close');
+function updateHeaderDrive(href) {
+  const a = document.getElementById('hdr-drive');
+  if (a) a.href = href;
 }
 
 async function showHome() {
+  currentView = 'home';
+  updateHeaderDrive(DRIVE_LINKS.root);
   const main = document.getElementById('main');
   main.className = 'main main-home';
   main.innerHTML = `
     <div class="home-dash">
       <button type="button" class="home-tile home-tile-attendance" id="home-att">
         <span class="home-tile-icon" aria-hidden="true">📋</span>
-        <span class="home-tile-title">Assembly attendance</span>
-        <span class="home-tile-sub">Morning staff roster · On time / Late / Absent</span>
+        <span class="home-tile-title">${t('attTitle')}</span>
+        <span class="home-tile-sub">${t('attSub')}</span>
       </button>
       <button type="button" class="home-tile home-tile-behavior" id="home-beh">
         <span class="home-tile-icon" aria-hidden="true">🛡️</span>
-        <span class="home-tile-title">Behavior tracker</span>
-        <span class="home-tile-sub">G4–6 incidents · pledges · MoE draft</span>
+        <span class="home-tile-title">${t('behTitle')}</span>
+        <span class="home-tile-sub">${t('behSub')}</span>
       </button>
     </div>
+    ${langSwitcherHtml('lang-switch-home')}
+    <p class="home-drive-row">
+      <a class="btn btn-secondary btn-block" href="${DRIVE_LINKS.root}" target="_blank" rel="noopener">${t('openDriveHome')}</a>
+    </p>
   `;
   document.getElementById('home-att').addEventListener('click', () => openTool('attendance'));
   document.getElementById('home-beh').addEventListener('click', () => openTool('behavior'));
+  bindLangSwitcher(main, async () => {
+    // re-paint shell + home with new lang
+    const session = getSession();
+    document.querySelector('.brand-text h1').textContent = t('appName');
+    document.getElementById('btn-lock').textContent = t('lock');
+    document.getElementById('hdr-drive').textContent = t('drive');
+    await showHome();
+  });
 }
 
 async function openTool(name) {
+  currentView = name;
+  const driveHref = name === 'attendance' ? DRIVE_LINKS.attendance : DRIVE_LINKS.behavior;
+  updateHeaderDrive(driveHref);
+
   const main = document.getElementById('main');
   main.className = 'main';
   main.innerHTML = `
     <div class="tool-top">
-      <button type="button" class="btn btn-secondary" id="btn-back">← Home</button>
-      <span class="muted" id="sync-hint">Auto-syncs when you go Home</span>
+      <button type="button" class="btn btn-secondary" id="btn-back">${t('backHome')}</button>
+      <a class="btn btn-secondary btn-sm" href="${driveHref}" target="_blank" rel="noopener">${t('drive')}</a>
     </div>
+    ${langSwitcherHtml('lang-switch-tool')}
     <div id="tool-root"></div>
   `;
   const root = document.getElementById('tool-root');
   document.getElementById('btn-back').addEventListener('click', async () => {
-    const btn = document.getElementById('btn-back');
-    btn.disabled = true;
-    btn.textContent = 'Syncing…';
-    await syncAfterUse('done');
+    await syncQuiet('home');
     await showHome();
+  });
+  bindLangSwitcher(main, async () => {
+    // refresh header labels + tool UI
+    document.querySelector('.brand-text h1').textContent = t('appName');
+    document.getElementById('btn-lock').textContent = t('lock');
+    document.getElementById('hdr-drive').textContent = t('drive');
+    await openTool(name);
   });
   if (name === 'attendance') await renderAttendance(root);
   else await renderBehavior(root);

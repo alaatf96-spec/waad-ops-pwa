@@ -1,11 +1,12 @@
 import { TEACHER_ROSTER } from '../data/roster.js';
 import { getAttendance, saveAttendance, todayRiyadh, formatRiyadhDisplay } from '../db/idb.js';
 import { scheduleDriveSync } from '../sync/driveSync.js';
+import { t, getLang } from '../i18n/index.js';
 
-const STATUSES = [
-  { key: 'on_time', label: 'On time', cls: 'btn-ontime' },
-  { key: 'late', label: 'Late', cls: 'btn-late' },
-  { key: 'absent', label: 'Absent', cls: 'btn-absent' }
+const STATUS_KEYS = [
+  { key: 'on_time', labelKey: 'onTime', cls: 'btn-ontime' },
+  { key: 'late', labelKey: 'late', cls: 'btn-late' },
+  { key: 'absent', labelKey: 'absent', cls: 'btn-absent' }
 ];
 
 function norm(s) {
@@ -13,6 +14,12 @@ function norm(s) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+}
+
+function roleLabel(role) {
+  if (role === 'ops') return t('roleOps');
+  if (role === 'teacher') return t('roleTeacher');
+  return role || '';
 }
 
 export async function renderAttendance(root) {
@@ -25,15 +32,15 @@ export async function renderAttendance(root) {
   wrap.innerHTML = `
     <header class="panel-head">
       <div>
-        <h2>Assembly attendance</h2>
+        <h2>${t('assemblyAttendance')}</h2>
         <p class="muted" id="att-date-label"></p>
       </div>
       <div class="panel-actions">
-        <button type="button" class="btn btn-secondary" id="att-today">Today</button>
+        <button type="button" class="btn btn-secondary" id="att-today">${t('today')}</button>
       </div>
     </header>
     <div class="search-bar">
-      <input type="search" id="att-search" placeholder="Search teacher…" autocomplete="off" enterkeyhint="search" />
+      <input type="search" id="att-search" placeholder="${t('searchTeacher')}" autocomplete="off" enterkeyhint="search" />
     </div>
     <div class="summary-bar" id="att-summary"></div>
     <div class="roster-list" id="att-list"></div>
@@ -57,7 +64,8 @@ export async function renderAttendance(root) {
   async function reload(d) {
     date = d;
     marks = await getAttendance(date);
-    dateLabel.textContent = `${formatRiyadhDisplay(date)} · Asia/Riyadh · key ${date}`;
+    // Clean date display — no timezone / key clutter
+    dateLabel.textContent = formatRiyadhDisplay(date, getLang());
     paint();
   }
 
@@ -70,16 +78,16 @@ export async function renderAttendance(root) {
       else counts.unset++;
     });
     summaryEl.innerHTML = `
-      <span class="chip chip-ontime">On time ${counts.on_time}</span>
-      <span class="chip chip-late">Late ${counts.late}</span>
-      <span class="chip chip-absent">Absent ${counts.absent}</span>
-      <span class="chip">Unset ${counts.unset}</span>
-      ${query.trim() ? `<span class="chip">Showing ${roster.length}/${TEACHER_ROSTER.length}</span>` : ''}
+      <span class="chip chip-ontime">${t('onTime')} ${counts.on_time}</span>
+      <span class="chip chip-late">${t('late')} ${counts.late}</span>
+      <span class="chip chip-absent">${t('absent')} ${counts.absent}</span>
+      <span class="chip">${t('unset')} ${counts.unset}</span>
+      ${query.trim() ? `<span class="chip">${t('showing')} ${roster.length}/${TEACHER_ROSTER.length}</span>` : ''}
     `;
 
     listEl.innerHTML = '';
     if (!roster.length) {
-      listEl.innerHTML = `<p class="empty">No teachers match “${escapeHtml(query.trim())}”.</p>`;
+      listEl.innerHTML = `<p class="empty">${t('noTeachersMatch')} “${escapeHtml(query.trim())}”.</p>`;
       return;
     }
     roster.forEach((person) => {
@@ -90,16 +98,16 @@ export async function renderAttendance(root) {
       card.innerHTML = `
         <div class="person-meta">
           <strong>${escapeHtml(person.name)}</strong>
-          <span class="muted">${escapeHtml(person.role)}${escapeHtml(grade)}</span>
+          <span class="muted">${escapeHtml(roleLabel(person.role))}${escapeHtml(grade)}</span>
         </div>
-        <div class="status-btns" role="group" aria-label="Attendance for ${escapeHtml(person.name)}"></div>
+        <div class="status-btns" role="group" aria-label="${escapeHtml(person.name)}"></div>
       `;
       const btns = card.querySelector('.status-btns');
-      STATUSES.forEach((st) => {
+      STATUS_KEYS.forEach((st) => {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = `btn status-btn ${st.cls}${current === st.key ? ' is-active' : ''}`;
-        b.textContent = st.label;
+        b.textContent = t(st.labelKey);
         b.addEventListener('click', async () => {
           marks = { ...marks, [person.id]: st.key };
           await saveAttendance(date, marks);
