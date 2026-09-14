@@ -320,7 +320,7 @@ export async function syncBehaviorNow(date = todayRiyadh()) {
     } else {
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       file = await uploadOrUpdateFile({
-        folderId: DRIVE_FOLDERS.appExports,
+        folderId: DRIVE_FOLDERS.behavior || DRIVE_FOLDERS.appExports,
         name,
         blob,
         mimeType: 'text/csv'
@@ -337,6 +337,47 @@ export async function syncBehaviorNow(date = todayRiyadh()) {
 }
 
 /** Upload both attendance + behavior (used by Upload button + idle). */
+
+/** Single incident payload for long-term Drive append / reports */
+export function buildIncidentPayload(incident, student) {
+  return {
+    studentId: incident.studentId,
+    name: student?.name || '',
+    grade: student?.grade || '',
+    section: student?.color || '',
+    color: student?.color || '',
+    date: incident.date,
+    category: incident.type || incident.category || '',
+    details: incident.pledge || incident.details || '',
+    action: incident.consequence || incident.action || '',
+    id: incident.id,
+    createdAt: incident.createdAt || null,
+    hasPhoto: !!(incident.photoDataUrl)
+  };
+}
+
+/** Upload one behavior incident (kind: behavior-incident) via webhook when available */
+export async function uploadBehaviorIncident(incident) {
+  const student = STUDENT_ROSTER.find((x) => x.id === incident.studentId);
+  const payload = buildIncidentPayload(incident, student);
+  const name = `behavior-incident-${incident.date || 'na'}-${(incident.id || '').slice(0, 8)}.json`;
+  if (hasWebhookUpload()) {
+    return uploadViaWebhook({
+      kind: 'behavior-incident',
+      name,
+      content: JSON.stringify(payload, null, 2),
+      mimeType: 'application/json'
+    });
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  return uploadOrUpdateFile({
+    folderId: DRIVE_FOLDERS.behavior || DRIVE_FOLDERS.appExports,
+    name,
+    blob,
+    mimeType: 'application/json'
+  });
+}
+
 export async function uploadAllNow() {
   const att = await syncAttendanceNow();
   const beh = await syncBehaviorNow();
@@ -417,8 +458,8 @@ export async function renderSync(root) {
     </div>
     <p class="muted" style="margin-top:12px" id="sync-msg"></p>
     <p class="muted">Auto-uploads ~8s after each save, and again after 5 minutes idle.</p>
-    <p class="muted"><a href="${DRIVE_LINKS.dailyCsv}" target="_blank" rel="noopener">Daily_CSV</a>
-      · <a href="${DRIVE_LINKS.appExports}" target="_blank" rel="noopener">App_Exports</a></p>
+    <p class="muted"><a href="${DRIVE_LINKS.attendance || DRIVE_LINKS.dailyCsv}" target="_blank" rel="noopener">Attendance</a>
+      · <a href="${DRIVE_LINKS.behavior}" target="_blank" rel="noopener">Behavior</a></p>
   `;
   root.appendChild(wrap);
   const statusEl = wrap.querySelector('#sync-status');
