@@ -182,15 +182,20 @@ function appendIncidentToStudent_(payload) {
     section: section
   });
 
-  appendIncidentRow_(report.doc, {
-    date: payload.date || '',
-    category: payload.category || payload.type || '',
-    details: payload.details || payload.pledge || '',
-    action: payload.action || payload.consequence || '',
-    recordedBy: payload.recordedBy || 'Waad Ops PWA'
-  });
+  var appendErr = null;
+  try {
+    appendIncidentRow_(report.doc, {
+      date: payload.date || '',
+      category: payload.category || payload.type || '',
+      details: payload.details || payload.pledge || '',
+      action: payload.action || payload.consequence || '',
+      recordedBy: payload.recordedBy || 'Waad Ops PWA'
+    });
+  } catch (eAppend) {
+    appendErr = String(eAppend);
+  }
 
-  return {
+  var out = {
     studentFolderId: studentFolder.getId(),
     reportDocId: report.doc.getId(),
     reportUrl: 'https://docs.google.com/document/d/' + report.doc.getId() + '/edit',
@@ -199,6 +204,8 @@ function appendIncidentToStudent_(payload) {
     grade: grade,
     section: section
   };
+  if (appendErr) out.appendError = appendErr;
+  return out;
 }
 
 function normalizeGrade_(g) {
@@ -310,19 +317,27 @@ function styleIncidentsTableHeader_(table) {
 
 function appendIncidentRow_(doc, row) {
   var body = doc.getBody();
-  var tables = body.getTables();
   var table = null;
-  // Prefer the incidents table (last table with 5 cols / header "Date")
-  for (var t = tables.length - 1; t >= 0; t--) {
-    var candidate = tables[t];
-    if (candidate.getNumColumns() >= 5) {
-      var h = '';
-      try { h = candidate.getCell(0, 0).getText(); } catch (eH) {}
-      if (String(h).indexOf('Date') === 0 || candidate.getNumRows() >= 1) {
-        table = candidate;
-        if (String(h).indexOf('Date') === 0) break;
-      }
+  // Walk body children — more reliable than getTables()/getNumColumns() on some runtimes
+  var n = body.getNumChildren();
+  for (var i = n - 1; i >= 0; i--) {
+    var child = body.getChild(i);
+    if (child.getType() !== DocumentApp.ElementType.TABLE) continue;
+    var candidate = child.asTable();
+    var ncols = 0;
+    try {
+      ncols = candidate.getRow(0).getNumCells();
+    } catch (eCols) {
+      continue;
     }
+    if (ncols < 5) continue;
+    var h = '';
+    try { h = candidate.getCell(0, 0).getText(); } catch (eH) {}
+    if (String(h).indexOf('Date') === 0) {
+      table = candidate;
+      break;
+    }
+    if (!table) table = candidate;
   }
   if (!table) {
     body.appendParagraph(
