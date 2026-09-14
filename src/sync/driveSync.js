@@ -310,9 +310,12 @@ export async function syncBehaviorNow(date = todayRiyadh()) {
     let file;
     if (hasWebhookUpload()) {
       file = await uploadViaWebhook({ kind: 'behavior', name, content: csv, mimeType: 'text/csv' });
-      const slim = incidents.map(({ photoDataUrl, ...rest }) => ({ ...rest, hasPhoto: !!photoDataUrl }));
+      const slim = incidents.map((inc) => {
+        const student = STUDENT_ROSTER.find((x) => x.id === inc.studentId);
+        return buildIncidentPayload(inc, student);
+      });
       await uploadViaWebhook({
-        kind: 'behavior',
+        kind: 'behavior-incidents-batch',
         name: `behavior-incidents-${date}.json`,
         content: JSON.stringify(slim, null, 2),
         mimeType: 'application/json'

@@ -4,7 +4,11 @@ export const DRIVE_FOLDERS = {
   dailyCsv: '1FUxEl1cf0Q8TsUrd2rEnhTywJzNzs7XP',
   behavior: '1H1-NWSmmtgZQOtT6Xjc6V7eNyqmxJSRP',
   appExports: '1WBaPpz_dxh3beNBd1RzfSefdW9juk9aW',
-  dailyCheckins: '1KT9Mw081ljI4JLC_NB3TOb38WMXe4L-K'
+  dailyCheckins: '1KT9Mw081ljI4JLC_NB3TOb38WMXe4L-K',
+  studentRoot: '1H9et4ejGWcEbn0DA5xCYTtL-NQt6jkCy',
+  grade4: '1yHl1mLnN_Hrl3LApmRDkURnIXKjdPxFU',
+  grade5: '1WDlV72hGVNvkz54dR7qRqvx7QJGh8VgY',
+  grade6: '1acbUOKZO8A_U4fAYXFjGA7b6Qzi9XcFu'
 };
 
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
@@ -14,7 +18,8 @@ export const DRIVE_LINKS = {
   attendance: 'https://drive.google.com/drive/folders/1FUxEl1cf0Q8TsUrd2rEnhTywJzNzs7XP',
   behavior: 'https://drive.google.com/drive/folders/1H1-NWSmmtgZQOtT6Xjc6V7eNyqmxJSRP',
   dailyCsv: 'https://drive.google.com/drive/folders/1FUxEl1cf0Q8TsUrd2rEnhTywJzNzs7XP',
-  appExports: 'https://drive.google.com/drive/folders/1WBaPpz_dxh3beNBd1RzfSefdW9juk9aW'
+  appExports: 'https://drive.google.com/drive/folders/1WBaPpz_dxh3beNBd1RzfSefdW9juk9aW',
+  students: 'https://drive.google.com/drive/folders/1H9et4ejGWcEbn0DA5xCYTtL-NQt6jkCy'
 };
 
 /** Apps Script web app URL (baked at build). Override with VITE_DRIVE_UPLOAD_URL */
