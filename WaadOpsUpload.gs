@@ -116,8 +116,33 @@ function handleBehaviorBatch_(body) {
 }
 
 function handleBehaviorIncident_(body) {
-  var raw = body.content || '{}';
-  var payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  var raw = body.content;
+  var payload = {};
+  if (raw) {
+    payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } else {
+    // Flat body support (curl probes / older clients)
+    payload = body;
+  }
+  // Alias map for probe / UI field names
+  if (!payload.name && (payload.studentName || body.studentName)) {
+    payload.name = payload.studentName || body.studentName;
+  }
+  if (!payload.category && (payload.incidentType || payload.type || body.incidentType)) {
+    payload.category = payload.incidentType || payload.type || body.incidentType;
+  }
+  if (!payload.details && (payload.description || payload.pledge || body.description)) {
+    payload.details = payload.description || payload.pledge || body.description;
+  }
+  if (!payload.action && (payload.actionTaken || payload.consequence || body.actionTaken)) {
+    payload.action = payload.actionTaken || payload.consequence || body.actionTaken;
+  }
+  if (!payload.waadId && body.waadId) payload.waadId = body.waadId;
+  if (!payload.studentId && body.studentId) payload.studentId = body.studentId;
+  if (!payload.grade && body.grade) payload.grade = body.grade;
+  if (!payload.section && (body.section || body.color)) payload.section = body.section || body.color;
+  if (!payload.date && body.date) payload.date = body.date;
+  if (!payload.recordedBy && body.recordedBy) payload.recordedBy = body.recordedBy;
   var result = appendIncidentToStudent_(payload);
 
   var safeId = String(payload.id || Utilities.getUuid()).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12);

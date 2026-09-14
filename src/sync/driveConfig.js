@@ -23,7 +23,7 @@ export const DRIVE_LINKS = {
 };
 
 /** Apps Script web app URL (baked at build). Override with VITE_DRIVE_UPLOAD_URL */
-export const DEFAULT_UPLOAD_URL = (import.meta.env.VITE_DRIVE_UPLOAD_URL || 'https://script.google.com/macros/s/AKfycbzS82wd1g5au1ndS3ufukYqBINKV3sy5wa92OcjRZIhg-_IizspJ3OnWdxF3VKGueA09A/exec').trim();
+export const DEFAULT_UPLOAD_URL = (import.meta.env.VITE_DRIVE_UPLOAD_URL || 'https://script.google.com/macros/s/AKfycbzYopYxUwQScYVE3fODZ4oHQ3xfoc9hTr0yCpSOZZ122Xvkys_s1TSY1QPgdRE8uE-fYg/exec').trim();
 
 /** Shared token for the relay (baked at build). Override with VITE_DRIVE_UPLOAD_TOKEN */
 export const DEFAULT_UPLOAD_TOKEN = (import.meta.env.VITE_DRIVE_UPLOAD_TOKEN || 'r-M-LW1rIuLxESItwMg10v13SYr0P7aH').trim();
