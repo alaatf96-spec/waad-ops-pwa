@@ -196,20 +196,23 @@ export async function uploadOrUpdateFile({ folderId, name, blob, mimeType }) {
   return res.json();
 }
 
-async function uploadViaWebhook({ kind, name, content, mimeType }) {
+async function uploadViaWebhook({ kind, name, content, mimeType, date, rows }) {
   if (!hasWebhookUpload()) throw new Error('Webhook not configured');
   // Apps Script web apps return 302 to an echo URL after doPost.
   // Following that redirect turns POST→GET and breaks; treat 302/opaqueredirect as success.
+  const payload = {
+    token: DEFAULT_UPLOAD_TOKEN,
+    kind,
+    name,
+    content,
+    mimeType: mimeType || 'text/csv'
+  };
+  if (date) payload.date = date;
+  if (rows) payload.rows = rows;
   const res = await fetch(DEFAULT_UPLOAD_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({
-      token: DEFAULT_UPLOAD_TOKEN,
-      kind,
-      name,
-      content,
-      mimeType: mimeType || 'text/csv'
-    }),
+    body: JSON.stringify(payload),
     redirect: 'manual'
   });
   if (res.type === 'opaqueredirect' || res.status === 0 || res.status === 302 || res.status === 301) {
@@ -233,6 +236,17 @@ async function uploadViaWebhook({ kind, name, content, mimeType }) {
 
 function csvEscape(c) {
   return `"${String(c ?? '').replace(/"/g, '""')}"`;
+}
+
+export function buildAttendanceRows(date, marks) {
+  return TEACHER_ROSTER.map((p) => ({
+    date,
+    id: p.id,
+    name: p.name,
+    role: p.role,
+    grade: p.grade || '',
+    status: marks[p.id] || ''
+  }));
 }
 
 export function buildAttendanceCsv(date, marks) {
@@ -282,7 +296,15 @@ export async function syncAttendanceNow(date = todayRiyadh()) {
     const name = `assembly-attendance-${date}.csv`;
     let file;
     if (hasWebhookUpload()) {
-      file = await uploadViaWebhook({ kind: 'attendance', name, content: csv, mimeType: 'text/csv' });
+      const rows = buildAttendanceRows(date, marks);
+      file = await uploadViaWebhook({
+        kind: 'attendance',
+        name,
+        content: csv,
+        mimeType: 'text/csv',
+        date,
+        rows
+      });
     } else {
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       file = await uploadOrUpdateFile({
@@ -345,6 +367,7 @@ export async function syncBehaviorNow(date = todayRiyadh()) {
 export function buildIncidentPayload(incident, student) {
   return {
     studentId: incident.studentId,
+    waadId: student?.waadId || incident.studentId || '',
     name: student?.name || '',
     grade: student?.grade || '',
     section: student?.color || '',
