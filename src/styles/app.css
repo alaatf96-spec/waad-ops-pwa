@@ -180,6 +180,7 @@ button { cursor: pointer; touch-action: manipulation; }
 .color-orange { background: #ffe4c7; color: #9a4e00; }
 .color-green { background: #d8f5ea; color: #0a6b4a; }
 .color-magenta { background: #fad6ea; color: #9a1048; }
+.color-red { background: #ffe0e0; color: #8b1a1a; }
 .incident-top {
   display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
   margin-bottom: 8px;
@@ -440,6 +441,8 @@ button { cursor: pointer; touch-action: manipulation; }
 .section-card.color-orange { background: #ffe4c7; color: #9a4e00; }
 .section-card.color-green { background: #d8f5ea; color: #0a6b4a; }
 .section-card.color-magenta { background: #fad6ea; color: #9a1048; }
+.section-card.color-red { background: #ffe0e0; color: #8b1a1a; }
+.color-red { background: #ffe0e0; color: #8b1a1a; }
 .section-card span { font-size: 0.85rem; opacity: 0.85; font-weight: 600; }
 .section-student-list { display: flex; flex-direction: column; gap: 8px; }
 .student-row {
