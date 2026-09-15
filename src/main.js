@@ -13,6 +13,7 @@ import {
 } from './auth/auth.js';
 import { renderAttendance } from './attendance/attendance.js';
 import { renderBehavior } from './behavior/behavior.js';
+import { renderTeachers } from './teachers/teachers.js';
 import { uploadAllNow, startIdleUploadWatcher, flushSyncKeepalive } from './sync/driveSync.js';
 import { DRIVE_LINKS } from './sync/driveConfig.js';
 import {
@@ -26,7 +27,7 @@ import {
 const app = document.getElementById('app');
 let syncing = false;
 let leaveHooksBound = false;
-let currentView = 'home'; // home | attendance | behavior
+let currentView = 'home'; // home | attendance | behavior | teachers
 let rerender = () => {};
 
 async function syncQuiet(reason) {
@@ -213,6 +214,7 @@ async function showApp() {
   rerender = async () => {
     if (currentView === 'attendance') await openTool('attendance');
     else if (currentView === 'behavior') await openTool('behavior');
+    else if (currentView === 'teachers') await openTool('teachers');
     else await showHome();
   };
 
@@ -241,6 +243,11 @@ async function showHome() {
         <span class="home-tile-title">${t('behTitle')}</span>
         <span class="home-tile-sub">${t('behSub')}</span>
       </button>
+      <button type="button" class="home-tile home-tile-teachers" id="home-tf">
+        <span class="home-tile-icon" aria-hidden="true">📁</span>
+        <span class="home-tile-title">${t('tfHomeTitle')}</span>
+        <span class="home-tile-sub">${t('tfHomeSub')}</span>
+      </button>
     </div>
     ${langSwitcherHtml('lang-switch-home')}
     <p class="home-drive-row">
@@ -249,6 +256,7 @@ async function showHome() {
   `;
   document.getElementById('home-att').addEventListener('click', () => openTool('attendance'));
   document.getElementById('home-beh').addEventListener('click', () => openTool('behavior'));
+  document.getElementById('home-tf').addEventListener('click', () => openTool('teachers'));
   bindLangSwitcher(main, async () => {
     // re-paint shell + home with new lang
     const session = getSession();
@@ -261,7 +269,12 @@ async function showHome() {
 
 async function openTool(name) {
   currentView = name;
-  const driveHref = name === 'attendance' ? DRIVE_LINKS.attendance : DRIVE_LINKS.behavior;
+  const driveHref =
+    name === 'attendance'
+      ? DRIVE_LINKS.attendance
+      : name === 'teachers'
+        ? DRIVE_LINKS.teachers || DRIVE_LINKS.root
+        : DRIVE_LINKS.behavior;
   updateHeaderDrive(driveHref);
 
   const main = document.getElementById('main');
@@ -287,6 +300,7 @@ async function openTool(name) {
     await openTool(name);
   });
   if (name === 'attendance') await renderAttendance(root);
+  else if (name === 'teachers') await renderTeachers(root);
   else await renderBehavior(root);
 }
 

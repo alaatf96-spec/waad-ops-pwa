@@ -123,6 +123,19 @@ function doPost(e) {
     if (kind === 'attendance' || kind === 'attendance-sheet') {
       return json_(handleAttendance_(body));
     }
+    // Allow teacher payloads as flat fields or JSON in content
+    if (kind.indexOf('teacher-') === 0 && body.content && typeof body.content === 'string') {
+      try {
+        var embedded = JSON.parse(body.content);
+        if (embedded && typeof embedded === 'object' && !Array.isArray(embedded)) {
+          for (var ek in embedded) {
+            if (Object.prototype.hasOwnProperty.call(embedded, ek) && body[ek] == null) {
+              body[ek] = embedded[ek];
+            }
+          }
+        }
+      } catch (ignoreParse) {}
+    }
     if (kind === 'teacher-note') {
       return json_(handleTeacherNote_(body));
     }

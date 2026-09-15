@@ -132,3 +132,13 @@ export function formatRiyadhDisplay(isoDate, lang = 'en') {
     return isoDate;
   }
 }
+
+/** All attendance day records: [{ date, marks, updatedAt }, ...] */
+export async function listAllAttendance() {
+  const store = await tx('attendance');
+  return new Promise((resolve, reject) => {
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}

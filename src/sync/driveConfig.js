@@ -8,7 +8,8 @@ export const DRIVE_FOLDERS = {
   studentRoot: '1H9et4ejGWcEbn0DA5xCYTtL-NQt6jkCy',
   grade4: '1yHl1mLnN_Hrl3LApmRDkURnIXKjdPxFU',
   grade5: '1WDlV72hGVNvkz54dR7qRqvx7QJGh8VgY',
-  grade6: '1acbUOKZO8A_U4fAYXFjGA7b6Qzi9XcFu'
+  grade6: '1acbUOKZO8A_U4fAYXFjGA7b6Qzi9XcFu',
+  teacherHr: '1PJrq1LgrvawA1dKBPtKpgStcDwVpXtNZ'
 };
 
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
@@ -19,7 +20,8 @@ export const DRIVE_LINKS = {
   behavior: 'https://drive.google.com/drive/folders/1H1-NWSmmtgZQOtT6Xjc6V7eNyqmxJSRP',
   dailyCsv: 'https://drive.google.com/drive/folders/1FUxEl1cf0Q8TsUrd2rEnhTywJzNzs7XP',
   appExports: 'https://drive.google.com/drive/folders/1WBaPpz_dxh3beNBd1RzfSefdW9juk9aW',
-  students: 'https://drive.google.com/drive/folders/1H9et4ejGWcEbn0DA5xCYTtL-NQt6jkCy'
+  students: 'https://drive.google.com/drive/folders/1H9et4ejGWcEbn0DA5xCYTtL-NQt6jkCy',
+  teachers: 'https://drive.google.com/drive/folders/1PJrq1LgrvawA1dKBPtKpgStcDwVpXtNZ'
 };
 
 /** Apps Script web app URL (baked at build). Override with VITE_DRIVE_UPLOAD_URL */

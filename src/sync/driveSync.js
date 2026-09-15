@@ -196,7 +196,7 @@ export async function uploadOrUpdateFile({ folderId, name, blob, mimeType }) {
   return res.json();
 }
 
-function buildWebhookPayload({ kind, name, content, mimeType, date, rows }) {
+function buildWebhookPayload({ kind, name, content, mimeType, date, rows, fields }) {
   const payload = {
     token: DEFAULT_UPLOAD_TOKEN,
     kind,
@@ -206,6 +206,11 @@ function buildWebhookPayload({ kind, name, content, mimeType, date, rows }) {
   };
   if (date) payload.date = date;
   if (rows) payload.rows = rows;
+  if (fields && typeof fields === 'object') {
+    for (const [k, v] of Object.entries(fields)) {
+      if (v !== undefined) payload[k] = v;
+    }
+  }
   return payload;
 }
 
@@ -229,9 +234,9 @@ function parseWebhookResponse(text, name) {
  * Prefer reading JSON when CORS/redirect allows; never treat opaque 302 as verified success.
  * Use keepalive for leave-site / pagehide so mobile browsers do not kill the request.
  */
-async function uploadViaWebhook({ kind, name, content, mimeType, date, rows, keepalive = false }) {
+async function uploadViaWebhook({ kind, name, content, mimeType, date, rows, keepalive = false, fields }) {
   if (!hasWebhookUpload()) throw new Error('Webhook not configured');
-  const payload = buildWebhookPayload({ kind, name, content, mimeType, date, rows });
+  const payload = buildWebhookPayload({ kind, name, content, mimeType, date, rows, fields });
   const body = JSON.stringify(payload);
 
   // Leave-site path: sendBeacon first (most reliable on mobile pagehide), then keepalive fetch.
@@ -488,6 +493,49 @@ export async function uploadBehaviorIncident(incident) {
     name,
     blob,
     mimeType: 'application/json'
+  });
+}
+
+/** POST teacher-ratings via webhook (Staff HR Doc bars). */
+export async function uploadTeacherRatings(payload) {
+  if (!hasWebhookUpload()) throw new Error('Webhook not configured');
+  const name = `teacher-ratings-${(payload.teacherName || 'na').replace(/\s+/g, '_')}.json`;
+  return uploadViaWebhook({
+    kind: 'teacher-ratings',
+    name,
+    content: JSON.stringify(payload, null, 2),
+    mimeType: 'application/json',
+    fields: {
+      teacherName: payload.teacherName,
+      teacherId: payload.teacherId,
+      role: payload.role,
+      classroom: payload.classroom,
+      betweenClass: payload.betweenClass,
+      duty: payload.duty,
+      recordedBy: payload.recordedBy
+    }
+  });
+}
+
+/** POST teacher-note via webhook (section + chronological log). */
+export async function uploadTeacherNote(payload) {
+  if (!hasWebhookUpload()) throw new Error('Webhook not configured');
+  const name = `teacher-note-${(payload.teacherName || 'na').replace(/\s+/g, '_')}-${Date.now()}.json`;
+  return uploadViaWebhook({
+    kind: 'teacher-note',
+    name,
+    content: JSON.stringify(payload, null, 2),
+    mimeType: 'application/json',
+    date: payload.date,
+    fields: {
+      teacherName: payload.teacherName,
+      teacherId: payload.teacherId,
+      noteType: payload.noteType,
+      text: payload.text,
+      recordedBy: payload.recordedBy,
+      date: payload.date,
+      role: payload.role
+    }
   });
 }
 
