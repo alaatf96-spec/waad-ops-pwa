@@ -646,6 +646,12 @@ button { cursor: pointer; touch-action: manipulation; }
   border-color: var(--orange);
   color: #9a4e00;
 }
+
+.tf-note-chip.accent-navy.is-active {
+  background: rgba(42, 48, 119, 0.16);
+  border-color: var(--navy);
+  color: var(--navy);
+}
 .tf-note-label {
   display: flex;
   flex-direction: column;

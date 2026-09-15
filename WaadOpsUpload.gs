@@ -15,7 +15,7 @@
  *   Staff HR Docs under 06_Teacher_HR.
  *
  * bootstrapStudentReports(roster) — one-shot student Docs (do NOT bulk ~223 unless asked).
- * upgradeExistingStudentDocs_(folderOrDocIds) — optional one-shot restyle (do NOT bulk-run).
+ * upgrade-student-docs / upgradeExistingStudentDocs_ — restyle G4/G5/G6 Docs (preserve incident tables).
  * ensureTeacherFolders_(optRoster) — create teacher folders + HR Docs (sample-first).
  */
 var DAILY_CSV = '1FUxEl1cf0Q8TsUrd2rEnhTywJzNzs7XP';
@@ -148,6 +148,9 @@ function doPost(e) {
     if (kind === 'teacher-scaffold') {
       return json_(handleTeacherScaffold_(body));
     }
+    if (kind === 'upgrade-student-docs') {
+      return json_(handleUpgradeStudentDocs_(body));
+    }
 
     var name = body.name || ('upload-' + new Date().toISOString() + '.csv');
     var content = body.content || '';
@@ -180,7 +183,8 @@ function doGet() {
     studentReports: true,
     branded: true,
     premiumBrand: true,
-    teacherFolders: true
+    teacherFolders: true,
+    upgradeStudentDocs: true
   });
 }
 
@@ -533,20 +537,86 @@ function appendIncidentRow_(doc, row) {
 }
 
 /**
- * Optional one-shot: restyle existing student behavior Docs to premium brand.
+ * Webhook: upgrade-student-docs
+ * Discovers Long-Term Behavior Docs under G4/G5/G6 (or uses body.items / docIds).
+ * Preserves incident table rows; rebuilds premium cover/header only.
+ * Optional body.offset / body.limit for batching (Apps Script time limits).
+ */
+function handleUpgradeStudentDocs_(body) {
+  var items = body.items || body.docIds || null;
+  var grades = body.grades || ['G4', 'G5', 'G6'];
+  if (!items || !items.length) {
+    items = collectStudentReportDocs_(grades);
+  }
+  var offset = Math.max(0, Number(body.offset) || 0);
+  var limit = body.limit != null ? Math.max(1, Number(body.limit)) : items.length;
+  var slice = items.slice(offset, offset + limit);
+  var result = upgradeExistingStudentDocs_(slice);
+  result.kind = 'upgrade-student-docs';
+  result.discovered = items.length;
+  result.offset = offset;
+  result.limit = limit;
+  result.processed = slice.length;
+  result.nextOffset = offset + slice.length;
+  result.done = result.nextOffset >= items.length;
+  result.grades = grades;
+  return result;
+}
+
+/** Walk grade folders → student folders → Long-Term Behavior Docs. */
+function collectStudentReportDocs_(grades) {
+  var out = [];
+  for (var g = 0; g < grades.length; g++) {
+    var grade = String(grades[g]);
+    var folderId = GRADE_FOLDERS[grade];
+    if (!folderId) continue;
+    var gradeFolder = DriveApp.getFolderById(folderId);
+    var studentFolders = gradeFolder.getFolders();
+    while (studentFolders.hasNext()) {
+      var sf = studentFolders.next();
+      var folderName = sf.getName();
+      var parts = String(folderName).split(' — ');
+      var studentName = (parts[0] || '').replace(/\s+/g, ' ').trim();
+      var studentId = parts.length > 1 ? parts.slice(1).join(' — ').trim() : '';
+      var files = sf.getFiles();
+      while (files.hasNext()) {
+        var f = files.next();
+        if (f.getMimeType() !== MimeType.GOOGLE_DOCS) continue;
+        var title = f.getName();
+        if (String(title).indexOf('Long-Term Behavior Incident Report') !== 0) continue;
+        out.push({
+          docId: f.getId(),
+          studentName: studentName || guessMetaFromTitle_(title, 'name'),
+          studentId: studentId,
+          grade: grade,
+          section: ''
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Restyle existing student behavior Docs to premium brand.
  * Pass array of Document IDs or {docId, studentName, studentId, grade, section}.
- * Do NOT bulk-run ~223 unless explicitly asked.
+ * Preserves incident history from the Date-header table.
  */
 function upgradeExistingStudentDocs_(items) {
   if (!items || !items.length) {
-    return { ok: false, error: 'Pass array of doc IDs or meta objects; do not bulk-run full roster unless asked' };
+    return { ok: false, error: 'No student Docs to upgrade (empty items)' };
   }
   var upgraded = 0;
+  var skipped = 0;
   var errors = [];
   for (var i = 0; i < items.length; i++) {
     try {
       var item = items[i];
       var docId = typeof item === 'string' ? item : (item.docId || item.id);
+      if (!docId) {
+        skipped++;
+        continue;
+      }
       var doc = DocumentApp.openById(docId);
       var body = doc.getBody();
       // Preserve incident rows: extract from first Date-header table
@@ -585,7 +655,7 @@ function upgradeExistingStudentDocs_(items) {
       errors.push(String(err));
     }
   }
-  return { ok: true, upgraded: upgraded, errors: errors };
+  return { ok: true, upgraded: upgraded, skipped: skipped, errors: errors };
 }
 
 function extractIncidentRows_(body) {
@@ -1228,16 +1298,28 @@ function handleTeacherNote_(body) {
   var teacherName = body.teacherName || body.name;
   if (!teacherName) return { ok: false, error: 'teacherName required' };
   var noteType = String(body.noteType || body.type || 'achievement').toLowerCase();
-  var allowed = { achievement: 1, initiative: 1, complaint: 1, issue: 1 };
-  if (!allowed[noteType]) noteType = 'achievement';
-  var text = body.text || body.note || body.content || '';
+  var allowed = { achievement: 1, initiative: 1, complaint: 1, issue: 1, incident: 1 };
+  if (!allowed[noteType]) noteType = 'incident';
+  var text = body.text || body.note || body.details || body.content || '';
+  if (typeof text === 'string' && text.charAt(0) === '{') {
+    // Avoid dumping raw JSON content into the log when content field is the payload envelope
+    try {
+      var maybe = JSON.parse(text);
+      if (maybe && typeof maybe === 'object') text = maybe.text || maybe.note || maybe.details || '';
+    } catch (ignoreJson) {}
+  }
+  var action = String(body.action || body.actionTaken || '').trim();
   var recordedBy = body.recordedBy || 'Waad Ops PWA';
   var date = body.date || Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd');
+  var logText = String(text || '');
+  if (action) {
+    logText = logText ? (logText + ' · Action: ' + action) : ('Action: ' + action);
+  }
 
   var doc = openTeacherDocByName_(teacherName);
   var bodyEl = doc.getBody();
 
-  // Append under matching section heading if found, else chronological log
+  // Append under matching section heading if found (not for general incident)
   var sectionMap = {
     achievement: '6. Achievements',
     initiative: '7. Initiatives',
@@ -1246,33 +1328,34 @@ function handleTeacherNote_(body) {
   };
   var heading = sectionMap[noteType];
   var inserted = false;
-  var n = bodyEl.getNumChildren();
-  for (var i = 0; i < n; i++) {
-    var child = bodyEl.getChild(i);
-    if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
-    var p = child.asParagraph();
-    if (String(p.getText()).indexOf(heading) === 0) {
-      // Find next non-empty content paragraph after accent rule — replace placeholder "—"
-      for (var j = i + 1; j < Math.min(i + 6, bodyEl.getNumChildren()); j++) {
-        var ch2 = bodyEl.getChild(j);
-        if (ch2.getType() === DocumentApp.ElementType.PARAGRAPH) {
-          var p2 = ch2.asParagraph();
-          var t2 = String(p2.getText()).trim();
-          if (t2 === '—' || t2 === '-') {
-            p2.setText('• [' + date + '] ' + text);
-            p2.setForegroundColor('#222222');
-            inserted = true;
-            break;
-          }
-          if (t2.indexOf('•') === 0 || t2.length > 1) {
-            bodyEl.insertParagraph(j + 1, '• [' + date + '] ' + text)
-              .setForegroundColor('#222222');
-            inserted = true;
-            break;
+  if (heading) {
+    var n = bodyEl.getNumChildren();
+    for (var i = 0; i < n; i++) {
+      var child = bodyEl.getChild(i);
+      if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
+      var p = child.asParagraph();
+      if (String(p.getText()).indexOf(heading) === 0) {
+        for (var j = i + 1; j < Math.min(i + 6, bodyEl.getNumChildren()); j++) {
+          var ch2 = bodyEl.getChild(j);
+          if (ch2.getType() === DocumentApp.ElementType.PARAGRAPH) {
+            var p2 = ch2.asParagraph();
+            var t2 = String(p2.getText()).trim();
+            if (t2 === '—' || t2 === '-') {
+              p2.setText('• [' + date + '] ' + logText);
+              p2.setForegroundColor('#222222');
+              inserted = true;
+              break;
+            }
+            if (t2.indexOf('•') === 0 || t2.length > 1) {
+              bodyEl.insertParagraph(j + 1, '• [' + date + '] ' + logText)
+                .setForegroundColor('#222222');
+              inserted = true;
+              break;
+            }
           }
         }
+        break;
       }
-      break;
     }
   }
 
@@ -1282,11 +1365,11 @@ function handleTeacherNote_(body) {
     var r = logTable.appendTableRow();
     r.appendTableCell(date);
     r.appendTableCell(noteType);
-    r.appendTableCell(String(text));
+    r.appendTableCell(String(logText));
     r.appendTableCell(recordedBy);
     styleIncidentDataRow_(r, logTable.getNumRows() - 1);
   } else if (!inserted) {
-    bodyEl.appendParagraph('[' + date + '] ' + noteType + ': ' + text + ' (' + recordedBy + ')');
+    bodyEl.appendParagraph('[' + date + '] ' + noteType + ': ' + logText + ' (' + recordedBy + ')');
   }
 
   doc.saveAndClose();
@@ -1295,6 +1378,7 @@ function handleTeacherNote_(body) {
     kind: 'teacher-note',
     teacherName: teacherName,
     noteType: noteType,
+    action: action || null,
     docId: doc.getId(),
     url: 'https://docs.google.com/document/d/' + doc.getId() + '/edit'
   };

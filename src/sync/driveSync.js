@@ -532,6 +532,8 @@ export async function uploadTeacherNote(payload) {
       teacherId: payload.teacherId,
       noteType: payload.noteType,
       text: payload.text,
+      details: payload.text,
+      action: payload.action,
       recordedBy: payload.recordedBy,
       date: payload.date,
       role: payload.role

@@ -1,5 +1,5 @@
 /**
- * Teacher folders — ratings, HR notes, local attendance metrics.
+ * Teacher folders — list/search like behavior, ratings, HR incident log.
  */
 import { TEACHER_ROSTER } from '../data/roster.js';
 import {
@@ -17,7 +17,8 @@ const NOTE_TYPES = [
   { key: 'achievement', accent: 'cyan' },
   { key: 'initiative', accent: 'cyan' },
   { key: 'complaint', accent: 'magenta' },
-  { key: 'issue', accent: 'orange' }
+  { key: 'issue', accent: 'orange' },
+  { key: 'incident', accent: 'navy' }
 ];
 
 const RATINGS_KEY = (id) => `teacherRatings:${id}`;
@@ -27,6 +28,12 @@ function norm(s) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+}
+
+function matchTeacher(p, q) {
+  if (!q) return true;
+  const hay = norm(`${p.name} ${p.role} ${p.id}`);
+  return hay.includes(q) || q.split(/\s+/).every((part) => hay.includes(part));
 }
 
 function roleLabel(role) {
@@ -180,10 +187,13 @@ export async function renderTeachers(root) {
   /** @type {typeof TEACHER_ROSTER[0] | null} */
   let selected = null;
   let ratings = defaultRatings();
-  let noteType = 'achievement';
+  let noteType = 'incident';
+  let noteDate = todayRiyadh();
   let metrics = null;
   let savingRatings = false;
   let savingNote = false;
+  let showLogForm = false;
+  let pendingOpenLog = false;
 
   const wrap = document.createElement('section');
   wrap.className = 'panel teachers-panel';
@@ -191,17 +201,16 @@ export async function renderTeachers(root) {
 
   function filtered() {
     const q = norm(query).trim();
-    if (!q) return TEACHER_ROSTER;
-    return TEACHER_ROSTER.filter((p) => {
-      const hay = norm(`${p.name} ${p.role} ${p.id}`);
-      return hay.includes(q) || q.split(/\s+/).every((part) => hay.includes(part));
-    });
+    return TEACHER_ROSTER.filter((p) => matchTeacher(p, q));
   }
 
-  async function selectTeacher(teacher) {
+  async function selectTeacher(teacher, openLog = false) {
     selected = teacher;
     ratings = await loadRatings(teacher.id);
-    noteType = 'achievement';
+    noteType = 'incident';
+    noteDate = todayRiyadh();
+    showLogForm = !!(openLog || pendingOpenLog);
+    pendingOpenLog = false;
     metrics = await attendanceMetricsFor(teacher.id);
     paint();
   }
@@ -209,12 +218,12 @@ export async function renderTeachers(root) {
   function paintList() {
     const roster = filtered();
     if (!roster.length) {
-      return `<p class="muted">${t('noTeachersMatch')}</p>`;
+      return `<p class="empty">${t('noTeachersMatch')}${query.trim() ? ` “${escapeHtml(query.trim())}”` : ''}.</p>`;
     }
-    return `<div class="roster-list tf-roster">${roster
+    return `<div class="roster-list tf-roster section-student-list">${roster
       .map(
         (p) => `
-      <button type="button" class="person-card tf-teacher-card ${selected?.id === p.id ? 'is-selected' : ''}" data-id="${p.id}">
+      <button type="button" class="person-card student-row tf-teacher-card ${selected?.id === p.id ? 'is-selected' : ''}" data-id="${p.id}">
         <div class="person-info">
           <strong>${escapeHtml(p.name)}</strong>
           <span class="chip ${p.role === 'ops' ? 'chip-ontime' : ''}">${escapeHtml(roleLabel(p.role))}</span>
@@ -225,14 +234,50 @@ export async function renderTeachers(root) {
       .join('')}</div>`;
   }
 
+  function paintLogForm() {
+    const session = getSession();
+    return `
+      <div class="tf-notes card-form incident-form">
+        <h3>${t('tfLogIncident')}</h3>
+        <label>${t('date')}
+          <input type="date" id="tf-note-date" required value="${escapeHtml(noteDate)}" />
+        </label>
+        <div class="tf-note-chips" role="group" aria-label="${t('tfNoteType')}">
+          ${NOTE_TYPES.map(
+            (nt) => `
+            <button type="button" class="tf-note-chip accent-${nt.accent} ${noteType === nt.key ? 'is-active' : ''}" data-note="${nt.key}">
+              ${t('tfNote_' + nt.key)}
+            </button>`
+          ).join('')}
+        </div>
+        <label class="tf-note-label">
+          ${t('tfNoteText')}
+          <textarea id="tf-note-text" rows="3" placeholder="${t('tfNotePlaceholder')}"></textarea>
+        </label>
+        <label class="tf-note-label">
+          ${t('tfActionTaken')}
+          <input type="text" id="tf-note-action" placeholder="${t('tfActionPlaceholder')}" autocomplete="off" />
+        </label>
+        <p class="muted" style="margin:6px 0 0;font-size:0.85rem">${t('tfRecordedBy')}: ${escapeHtml(session?.name || session?.email || 'Ops')}</p>
+        <div class="form-actions" style="margin-top:12px">
+          <button type="button" class="btn btn-secondary" id="tf-cancel-note">${t('cancel')}</button>
+          <button type="button" class="btn btn-primary" id="tf-save-note" ${savingNote ? 'disabled' : ''}>
+            ${savingNote ? t('syncing') : t('tfSaveNote')}
+          </button>
+        </div>
+      </div>`;
+  }
+
   function paintDetail() {
     if (!selected) {
       return `<p class="muted tf-pick-hint">${t('tfPickTeacher')}</p>`;
     }
-    const session = getSession();
     return `
       <div class="tf-detail">
-        <button type="button" class="btn btn-secondary btn-sm" id="tf-back-list">${t('tfBackList')}</button>
+        <div class="sections-head" style="margin-bottom:4px">
+          <button type="button" class="btn btn-secondary btn-sm" id="tf-back-list">${t('tfBackList')}</button>
+          <button type="button" class="btn btn-primary btn-sm" id="tf-open-log">${t('tfAddEntry')}</button>
+        </div>
         <div class="tf-detail-head card-form">
           <h3>${escapeHtml(selected.name)}</h3>
           <span class="chip">${escapeHtml(roleLabel(selected.role))}</span>
@@ -247,25 +292,7 @@ export async function renderTeachers(root) {
             ${savingRatings ? t('syncing') : t('tfSaveRatings')}
           </button>
         </div>
-        <div class="tf-notes card-form">
-          <h3>${t('tfNotes')}</h3>
-          <div class="tf-note-chips" role="group" aria-label="${t('tfNoteType')}">
-            ${NOTE_TYPES.map(
-              (nt) => `
-              <button type="button" class="tf-note-chip accent-${nt.accent} ${noteType === nt.key ? 'is-active' : ''}" data-note="${nt.key}">
-                ${t('tfNote_' + nt.key)}
-              </button>`
-            ).join('')}
-          </div>
-          <label class="tf-note-label">
-            ${t('tfNoteText')}
-            <textarea id="tf-note-text" rows="4" placeholder="${t('tfNotePlaceholder')}"></textarea>
-          </label>
-          <p class="muted" style="margin:6px 0 0;font-size:0.85rem">${t('tfRecordedBy')}: ${escapeHtml(session?.name || session?.email || 'Ops')}</p>
-          <button type="button" class="btn btn-primary btn-block" id="tf-save-note" style="margin-top:12px" ${savingNote ? 'disabled' : ''}>
-            ${savingNote ? t('syncing') : t('tfSaveNote')}
-          </button>
-        </div>
+        ${showLogForm ? paintLogForm() : ''}
       </div>`;
   }
 
@@ -276,14 +303,25 @@ export async function renderTeachers(root) {
           <h2>${t('tfTitle')}</h2>
           <p class="muted">${t('tfSub')}</p>
         </div>
+        ${
+          selected
+            ? ''
+            : `<div class="panel-actions">
+                 <button type="button" class="btn btn-primary" id="tf-add-entry">${t('tfAddEntry')}</button>
+               </div>`
+        }
       </header>
       ${
         selected
           ? ''
-          : `<div class="search-bar">
+          : `<div class="search-bar" id="tf-search-wrap">
               <input type="search" id="tf-search" placeholder="${t('searchTeacher')}" value="${escapeHtml(query)}" autocomplete="off" enterkeyhint="search" />
             </div>
-            ${query.trim() ? `<p class="muted" style="margin:0 0 8px">${t('showing')} ${filtered().length}/${TEACHER_ROSTER.length}</p>` : ''}
+            ${
+              query.trim()
+                ? `<p class="muted" style="margin:0 0 8px">${t('showing')} ${filtered().length}/${TEACHER_ROSTER.length}</p>`
+                : ''
+            }
             ${paintList()}`
       }
       ${selected ? paintDetail() : ''}
@@ -315,6 +353,17 @@ export async function renderTeachers(root) {
     };
   }
 
+  function openQuickLogPicker() {
+    // Behavior-like: pick a teacher, then open the log form
+    selected = null;
+    showLogForm = false;
+    pendingOpenLog = true;
+    paint();
+    const search = wrap.querySelector('#tf-search');
+    if (search) search.focus({ preventScroll: true });
+    toast(t('tfPickTeacher'));
+  }
+
   function bind() {
     const search = wrap.querySelector('#tf-search');
     if (search) {
@@ -330,15 +379,33 @@ export async function renderTeachers(root) {
       });
     }
 
+    wrap.querySelector('#tf-add-entry')?.addEventListener('click', () => {
+      openQuickLogPicker();
+    });
+
     wrap.querySelectorAll('.tf-teacher-card').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const teacher = TEACHER_ROSTER.find((p) => p.id === btn.dataset.id);
-        if (teacher) await selectTeacher(teacher);
+        if (teacher) await selectTeacher(teacher, pendingOpenLog);
       });
     });
 
     wrap.querySelector('#tf-back-list')?.addEventListener('click', () => {
       selected = null;
+      showLogForm = false;
+      pendingOpenLog = false;
+      paint();
+    });
+
+    wrap.querySelector('#tf-open-log')?.addEventListener('click', () => {
+      showLogForm = true;
+      noteDate = todayRiyadh();
+      paint();
+      wrap.querySelector('#tf-note-text')?.focus();
+    });
+
+    wrap.querySelector('#tf-cancel-note')?.addEventListener('click', () => {
+      showLogForm = false;
       paint();
     });
 
@@ -353,12 +420,19 @@ export async function renderTeachers(root) {
       });
     });
 
+    wrap.querySelector('#tf-note-date')?.addEventListener('change', (e) => {
+      noteDate = e.target.value || todayRiyadh();
+    });
+
     wrap.querySelector('#tf-save-ratings')?.addEventListener('click', async () => {
       if (!selected || savingRatings) return;
       ratings = readSliders();
+      const keepLog = showLogForm;
+      const keepText = wrap.querySelector('#tf-note-text')?.value || '';
+      const keepAction = wrap.querySelector('#tf-note-action')?.value || '';
+      const keepDate = wrap.querySelector('#tf-note-date')?.value || noteDate;
       savingRatings = true;
       paint();
-      // restore note textarea was wiped — ok for ratings save
       try {
         await saveRatingsLocal(selected.id, ratings);
         const session = getSession();
@@ -376,21 +450,35 @@ export async function renderTeachers(root) {
         toast(e.message || t('syncFailed'), true);
       } finally {
         savingRatings = false;
+        showLogForm = keepLog;
+        noteDate = keepDate;
         paint();
+        if (keepLog) {
+          const ta = wrap.querySelector('#tf-note-text');
+          const act = wrap.querySelector('#tf-note-action');
+          if (ta) ta.value = keepText;
+          if (act) act.value = keepAction;
+        }
       }
     });
 
     wrap.querySelector('#tf-save-note')?.addEventListener('click', async () => {
       if (!selected || savingNote) return;
       const textEl = wrap.querySelector('#tf-note-text');
+      const actionEl = wrap.querySelector('#tf-note-action');
+      const dateEl = wrap.querySelector('#tf-note-date');
       const text = (textEl?.value || '').trim();
+      const action = (actionEl?.value || '').trim();
+      const date = (dateEl?.value || noteDate || todayRiyadh()).trim();
       if (!text) {
         toast(t('tfNoteRequired'), true);
         return;
       }
       savingNote = true;
       const savedText = text;
+      const savedAction = action;
       const savedType = noteType;
+      const savedDate = date;
       paint();
       try {
         const session = getSession();
@@ -400,18 +488,25 @@ export async function renderTeachers(root) {
           role: selected.role,
           noteType: savedType,
           text: savedText,
-          date: todayRiyadh(),
+          action: savedAction,
+          date: savedDate,
           recordedBy: session?.name || session?.email || 'Waad Ops PWA'
         });
         toast(t('tfNoteSaved'));
-        noteType = 'achievement';
+        noteType = 'incident';
+        noteDate = todayRiyadh();
+        showLogForm = false;
       } catch (e) {
         toast(e.message || t('syncFailed'), true);
         savingNote = false;
         noteType = savedType;
+        noteDate = savedDate;
+        showLogForm = true;
         paint();
         const ta = wrap.querySelector('#tf-note-text');
+        const act = wrap.querySelector('#tf-note-action');
         if (ta) ta.value = savedText;
+        if (act) act.value = savedAction;
         wrap.querySelectorAll('.tf-note-chip').forEach((b) => {
           b.classList.toggle('is-active', b.dataset.note === noteType);
         });
@@ -424,4 +519,5 @@ export async function renderTeachers(root) {
   }
 
   paint();
+  wrap.querySelector('#tf-search')?.focus({ preventScroll: true });
 }
