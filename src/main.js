@@ -13,7 +13,7 @@ import {
 } from './auth/auth.js';
 import { renderAttendance } from './attendance/attendance.js';
 import { renderBehavior } from './behavior/behavior.js';
-import { uploadAllNow, startIdleUploadWatcher } from './sync/driveSync.js';
+import { uploadAllNow, startIdleUploadWatcher, flushSyncKeepalive } from './sync/driveSync.js';
 import { DRIVE_LINKS } from './sync/driveConfig.js';
 import {
   getLang,
@@ -30,13 +30,23 @@ let currentView = 'home'; // home | attendance | behavior
 let rerender = () => {};
 
 async function syncQuiet(reason) {
+  // Leave-site must not be blocked by an in-flight interactive sync lock for long;
+  // keepalive path is separate and critical on mobile pagehide.
+  if (reason === 'leave') {
+    try {
+      await flushSyncKeepalive();
+    } catch {
+      /* pending flags already set inside flush */
+    }
+    return;
+  }
   if (syncing) return;
   syncing = true;
   try {
     await uploadAllNow();
-    if (reason && reason !== 'leave') toast(`${t('synced')}`);
+    if (reason) toast(`${t('synced')}`);
   } catch (e) {
-    if (reason && reason !== 'leave') toast(e.message || t('syncFailed'));
+    if (reason) toast(e.message || t('syncFailed'));
   } finally {
     syncing = false;
   }
@@ -58,12 +68,19 @@ function toast(msg) {
 function bindLeaveSync() {
   if (leaveHooksBound) return;
   leaveHooksBound = true;
+  // visibilitychange fires first on mobile — kick keepalive sync before teardown
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') syncQuiet('leave');
+    if (document.visibilityState === 'hidden') {
+      syncQuiet('leave');
+    }
   });
-  window.addEventListener('pagehide', () => syncQuiet('leave'));
+  window.addEventListener('pagehide', () => {
+    syncQuiet('leave');
+  });
+  window.addEventListener('freeze', () => {
+    syncQuiet('leave');
+  });
   window.addEventListener('beforeunload', () => {
-    // fire-and-forget; browser may kill the promise
     syncQuiet('leave');
   });
 }

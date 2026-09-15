@@ -79,6 +79,11 @@ export default {
   // Sync / toast
   synced: 'تمت المزامنة مع درايف',
   syncFailed: 'فشلت المزامنة — حاول لاحقاً',
+  syncNow: 'مزامنة الآن',
+  syncing: 'جاري المزامنة…',
+  syncPending: 'بانتظار الرفع',
+  syncIdle: 'لم تتم المزامنة بعد',
+  lastSync: 'آخر مزامنة',
   roleOps: 'عمليات',
   roleTeacher: 'معلم'
 };

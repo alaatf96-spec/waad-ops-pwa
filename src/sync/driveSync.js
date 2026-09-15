@@ -196,10 +196,7 @@ export async function uploadOrUpdateFile({ folderId, name, blob, mimeType }) {
   return res.json();
 }
 
-async function uploadViaWebhook({ kind, name, content, mimeType, date, rows }) {
-  if (!hasWebhookUpload()) throw new Error('Webhook not configured');
-  // Apps Script web apps return 302 to an echo URL after doPost.
-  // Following that redirect turns POST→GET and breaks; treat 302/opaqueredirect as success.
+function buildWebhookPayload({ kind, name, content, mimeType, date, rows }) {
   const payload = {
     token: DEFAULT_UPLOAD_TOKEN,
     kind,
@@ -209,29 +206,112 @@ async function uploadViaWebhook({ kind, name, content, mimeType, date, rows }) {
   };
   if (date) payload.date = date;
   if (rows) payload.rows = rows;
-  const res = await fetch(DEFAULT_UPLOAD_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload),
-    redirect: 'manual'
-  });
-  if (res.type === 'opaqueredirect' || res.status === 0 || res.status === 302 || res.status === 301) {
-    return { ok: true, name };
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Upload relay HTTP ${res.status}: ${text.slice(0, 160)}`);
-  }
-  const text = await res.text();
+  return payload;
+}
+
+function parseWebhookResponse(text, name) {
+  if (!text) return { ok: true, name, unverified: true };
   try {
     const data = JSON.parse(text);
     if (!data.ok) throw new Error(data.error || 'Upload relay failed');
     return data;
   } catch (e) {
-    if (e.message && e.message.includes('relay')) throw e;
-    // Non-JSON 200 still ok if body empty
-    return { ok: true, name };
+    if (e.message && (e.message.includes('relay') || e.message.includes('unauthorized') || e.message.includes('Upload'))) {
+      throw e;
+    }
+    // Non-JSON body (HTML echo page) — request likely reached Apps Script
+    return { ok: true, name, unverified: true };
   }
+}
+
+/**
+ * Upload via Apps Script webhook.
+ * Prefer reading JSON when CORS/redirect allows; never treat opaque 302 as verified success.
+ * Use keepalive for leave-site / pagehide so mobile browsers do not kill the request.
+ */
+async function uploadViaWebhook({ kind, name, content, mimeType, date, rows, keepalive = false }) {
+  if (!hasWebhookUpload()) throw new Error('Webhook not configured');
+  const payload = buildWebhookPayload({ kind, name, content, mimeType, date, rows });
+  const body = JSON.stringify(payload);
+
+  // Leave-site path: sendBeacon first (most reliable on mobile pagehide), then keepalive fetch.
+  if (keepalive) {
+    let beaconOk = false;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        beaconOk = navigator.sendBeacon(
+          DEFAULT_UPLOAD_URL,
+          new Blob([body], { type: 'text/plain;charset=utf-8' })
+        );
+      }
+    } catch { /* fall through */ }
+    try {
+      const res = await fetch(DEFAULT_UPLOAD_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body,
+        keepalive: true,
+        mode: 'cors',
+        redirect: 'follow'
+      });
+      if (res.type === 'opaque' || res.type === 'opaqueredirect') {
+        return { ok: true, name, unverified: true, via: beaconOk ? 'beacon+opaque' : 'keepalive-opaque' };
+      }
+      if (res.ok) {
+        const text = await res.text().catch(() => '');
+        return { ...parseWebhookResponse(text, name), via: 'keepalive' };
+      }
+      // Non-OK but beacon may have delivered
+      if (beaconOk) return { ok: true, name, unverified: true, via: 'beacon' };
+      const text = await res.text().catch(() => '');
+      throw new Error(`Upload relay HTTP ${res.status}: ${text.slice(0, 160)}`);
+    } catch (e) {
+      if (beaconOk) return { ok: true, name, unverified: true, via: 'beacon' };
+      // Last resort no-cors keepalive (always opaque)
+      try {
+        await fetch(DEFAULT_UPLOAD_URL, {
+          method: 'POST',
+          body,
+          keepalive: true,
+          mode: 'no-cors'
+        });
+        return { ok: true, name, unverified: true, via: 'no-cors-keepalive' };
+      } catch {
+        throw e;
+      }
+    }
+  }
+
+  // Normal path: follow redirects and require JSON ok when readable.
+  const res = await fetch(DEFAULT_UPLOAD_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body,
+    redirect: 'follow'
+  });
+  if (res.type === 'opaque' || res.type === 'opaqueredirect') {
+    // CORS blocked body — request may have succeeded; mark unverified pending clear only if status path worked server-side.
+    // Retry once with redirect:manual to distinguish transport failure from opaque success.
+    const manual = await fetch(DEFAULT_UPLOAD_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body,
+      redirect: 'manual'
+    });
+    if (manual.type === 'opaqueredirect' || manual.status === 0 || manual.status === 302 || manual.status === 301) {
+      return { ok: true, name, unverified: true, via: 'opaque-302' };
+    }
+    if (!manual.ok) {
+      const text = await manual.text().catch(() => '');
+      throw new Error(`Upload relay HTTP ${manual.status}: ${text.slice(0, 160)}`);
+    }
+    return parseWebhookResponse(await manual.text().catch(() => ''), name);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Upload relay HTTP ${res.status}: ${text.slice(0, 160)}`);
+  }
+  return parseWebhookResponse(await res.text(), name);
 }
 
 function csvEscape(c) {
@@ -289,7 +369,7 @@ async function setPending(patch) {
   emit();
 }
 
-export async function syncAttendanceNow(date = todayRiyadh()) {
+export async function syncAttendanceNow(date = todayRiyadh(), { keepalive = false } = {}) {
   try {
     const marks = await getAttendance(date);
     const csv = buildAttendanceCsv(date, marks);
@@ -303,7 +383,8 @@ export async function syncAttendanceNow(date = todayRiyadh()) {
         content: csv,
         mimeType: 'text/csv',
         date,
-        rows
+        rows,
+        keepalive
       });
     } else {
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -315,7 +396,13 @@ export async function syncAttendanceNow(date = todayRiyadh()) {
       });
     }
     await setPending({ attendance: false });
-    await setMeta({ lastAttendanceAt: new Date().toISOString(), lastError: null, lastAttendanceFileId: file.fileId || file.id });
+    await setMeta({
+      lastAttendanceAt: new Date().toISOString(),
+      lastError: null,
+      lastAttendanceFileId: file.fileId || file.id || file.spreadsheetId || null,
+      lastAttendanceUnverified: !!file.unverified,
+      lastAttendanceVia: file.via || null
+    });
     return file;
   } catch (e) {
     await setPending({ attendance: true });
@@ -410,6 +497,7 @@ export async function uploadAllNow() {
   return { att, beh };
 }
 
+/** Short debounce for rapid taps; attendance UI prefers syncAttendanceNow immediately. */
 export function scheduleDriveSync(kind) {
   setPending(kind === 'behavior' ? { behavior: true } : { attendance: true });
   if (!hasWebhookUpload() && !getAccessToken()) {
@@ -423,8 +511,42 @@ export function scheduleDriveSync(kind) {
       if (kind === 'behavior') await syncBehaviorNow();
       else await syncAttendanceNow();
     } catch { /* status recorded */ }
-  }, 8000);
+  }, 400);
   bumpIdleTimer();
+}
+
+/**
+ * Leave-site / pagehide flush: keepalive + sendBeacon so mobile does not kill the POST.
+ * Prefer calling on visibilitychange hidden BEFORE the page is torn down.
+ */
+export async function flushSyncKeepalive() {
+  if (!hasWebhookUpload() && !getAccessToken()) {
+    await setPending({ attendance: true, behavior: true });
+    return { ok: false, skipped: true };
+  }
+  const pending = (await idbGet(PENDING_KEY)) || {};
+  const results = {};
+  try {
+    if (hasWebhookUpload()) {
+      results.att = await syncAttendanceNow(todayRiyadh(), { keepalive: true });
+      // Behavior batch is larger; still try keepalive for pending behavior
+      if (pending.behavior) {
+        try {
+          results.beh = await syncBehaviorNow();
+        } catch (e) {
+          results.behError = e.message || String(e);
+        }
+      }
+    } else {
+      results.att = await syncAttendanceNow();
+      if (pending.behavior) results.beh = await syncBehaviorNow();
+    }
+    return { ok: true, ...results };
+  } catch (e) {
+    await setPending({ attendance: true });
+    await setMeta({ lastError: e.message || String(e) });
+    throw e;
+  }
 }
 
 /** After 5 minutes of no taps, auto-upload pending data. */
@@ -446,11 +568,26 @@ export function bumpIdleTimer() {
 }
 
 export function startIdleUploadWatcher() {
-  const reset = () => bumpIdleTimer();
-  ['pointerdown', 'keydown', 'touchstart', 'visibilitychange'].forEach((ev) => {
+  const reset = () => {
+    // Do not reset idle on hide — leave-site flush in main.js must run unimpeded.
+    if (evIsHidden()) return;
+    bumpIdleTimer();
+  };
+  ['pointerdown', 'keydown', 'touchstart'].forEach((ev) => {
     document.addEventListener(ev, reset, { passive: true });
   });
+  document.addEventListener(
+    'visibilitychange',
+    () => {
+      if (document.visibilityState === 'visible') bumpIdleTimer();
+    },
+    { passive: true }
+  );
   bumpIdleTimer();
+}
+
+function evIsHidden() {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
 }
 
 function toast(msg) {
@@ -483,7 +620,7 @@ export async function renderSync(root) {
       <button type="button" class="btn btn-secondary" id="sync-disconnect">Disconnect</button>
     </div>
     <p class="muted" style="margin-top:12px" id="sync-msg"></p>
-    <p class="muted">Auto-uploads ~8s after each save, and again after 5 minutes idle.</p>
+    <p class="muted">Attendance syncs immediately on save; leave-site uses keepalive. Idle backup after 5 minutes.</p>
     <p class="muted"><a href="${DRIVE_LINKS.attendance || DRIVE_LINKS.dailyCsv}" target="_blank" rel="noopener">Attendance</a>
       · <a href="${DRIVE_LINKS.behavior}" target="_blank" rel="noopener">Behavior</a></p>
   `;

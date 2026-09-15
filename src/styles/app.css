@@ -472,3 +472,25 @@ button { cursor: pointer; touch-action: manipulation; }
 [dir="rtl"] .brand-home { text-align: right; }
 [dir="rtl"] .badge { margin-left: 0; margin-right: 8px; }
 [dir="rtl"] .form-actions { justify-content: flex-start; }
+
+
+/* Attendance sync status */
+.att-sync-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #eef1fb;
+  border: 1px solid rgba(42, 48, 119, 0.12);
+}
+.att-sync-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.att-sync-state { font-weight: 600; font-size: 0.92rem; }
+.att-sync-state.is-ok { color: var(--ok); }
+.att-sync-state.is-err { color: var(--danger); }
+.att-sync-state.is-pending,
+.att-sync-state.is-syncing { color: var(--orange); }
+.btn-sm { padding: 8px 12px; min-height: 40px; font-size: 0.9rem; }
+.toast.toast-err { background: #7f1d1d; }

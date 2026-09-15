@@ -1,6 +1,11 @@
 import { TEACHER_ROSTER } from '../data/roster.js';
 import { getAttendance, saveAttendance, todayRiyadh, formatRiyadhDisplay } from '../db/idb.js';
-import { scheduleDriveSync } from '../sync/driveSync.js';
+import {
+  syncAttendanceNow,
+  scheduleDriveSync,
+  subscribeSyncStatus,
+  getSyncStatus
+} from '../sync/driveSync.js';
 import { t, getLang } from '../i18n/index.js';
 
 const STATUS_KEYS = [
@@ -22,10 +27,40 @@ function roleLabel(role) {
   return role || '';
 }
 
+function toast(msg, isErr = false) {
+  let el = document.querySelector('.toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.toggle('toast-err', !!isErr);
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+function formatSyncTime(iso) {
+  if (!iso) return '—';
+  try {
+    return new Intl.DateTimeFormat(getLang() === 'ar' ? 'ar-SA' : 'en-GB', {
+      timeZone: 'Asia/Riyadh',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
 export async function renderAttendance(root) {
   let date = todayRiyadh();
   let marks = await getAttendance(date);
   let query = '';
+  let syncing = false;
+  let syncQueued = false;
 
   const wrap = document.createElement('section');
   wrap.className = 'panel attendance-panel';
@@ -39,6 +74,13 @@ export async function renderAttendance(root) {
         <button type="button" class="btn btn-secondary" id="att-today">${t('today')}</button>
       </div>
     </header>
+    <div class="att-sync-bar card-form" id="att-sync-bar" aria-live="polite">
+      <div class="att-sync-meta">
+        <span id="att-sync-status">${t('syncIdle')}</span>
+        <span class="muted" id="att-sync-last"></span>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="att-sync-now">${t('syncNow')}</button>
+    </div>
     <div class="search-bar">
       <input type="search" id="att-search" placeholder="${t('searchTeacher')}" autocomplete="off" enterkeyhint="search" />
     </div>
@@ -51,6 +93,64 @@ export async function renderAttendance(root) {
   const summaryEl = wrap.querySelector('#att-summary');
   const dateLabel = wrap.querySelector('#att-date-label');
   const searchEl = wrap.querySelector('#att-search');
+  const syncStatusEl = wrap.querySelector('#att-sync-status');
+  const syncLastEl = wrap.querySelector('#att-sync-last');
+  const syncNowBtn = wrap.querySelector('#att-sync-now');
+
+  async function paintSync(status) {
+    const s = status || (await getSyncStatus());
+    const pending = !!(s.pending && s.pending.attendance);
+    if (syncing) {
+      syncStatusEl.textContent = t('syncing');
+      syncStatusEl.className = 'att-sync-state is-syncing';
+    } else if (s.lastError) {
+      syncStatusEl.textContent = t('syncFailed');
+      syncStatusEl.className = 'att-sync-state is-err';
+    } else if (pending) {
+      syncStatusEl.textContent = t('syncPending');
+      syncStatusEl.className = 'att-sync-state is-pending';
+    } else if (s.lastAttendanceAt) {
+      syncStatusEl.textContent = t('synced');
+      syncStatusEl.className = 'att-sync-state is-ok';
+    } else {
+      syncStatusEl.textContent = t('syncIdle');
+      syncStatusEl.className = 'att-sync-state';
+    }
+    syncLastEl.textContent = `${t('lastSync')}: ${formatSyncTime(s.lastAttendanceAt)}`;
+    if (s.lastError) {
+      syncLastEl.textContent += ` · ${s.lastError.slice(0, 80)}`;
+    }
+  }
+
+  async function runSync({ quiet = false } = {}) {
+    if (syncing) {
+      syncQueued = true;
+      return;
+    }
+    syncing = true;
+    syncNowBtn.disabled = true;
+    await paintSync();
+    try {
+      do {
+        syncQueued = false;
+        await syncAttendanceNow(date);
+      } while (syncQueued);
+      if (!quiet) toast(t('synced'));
+      await paintSync();
+    } catch (e) {
+      scheduleDriveSync('attendance');
+      toast(e.message || t('syncFailed'), true);
+      await paintSync();
+    } finally {
+      syncing = false;
+      syncNowBtn.disabled = false;
+      await paintSync();
+      if (syncQueued) {
+        syncQueued = false;
+        runSync({ quiet: true });
+      }
+    }
+  }
 
   function filteredRoster() {
     const q = norm(query).trim();
@@ -64,9 +164,9 @@ export async function renderAttendance(root) {
   async function reload(d) {
     date = d;
     marks = await getAttendance(date);
-    // Clean date display — no timezone / key clutter
     dateLabel.textContent = formatRiyadhDisplay(date, getLang());
     paint();
+    await paintSync();
   }
 
   function paint() {
@@ -111,8 +211,9 @@ export async function renderAttendance(root) {
         b.addEventListener('click', async () => {
           marks = { ...marks, [person.id]: st.key };
           await saveAttendance(date, marks);
-          scheduleDriveSync('attendance');
           paint();
+          // Immediate Drive sync on every mark (no 8s wait)
+          await runSync({ quiet: true });
         });
         btns.appendChild(b);
       });
@@ -126,6 +227,22 @@ export async function renderAttendance(root) {
   });
 
   wrap.querySelector('#att-today').addEventListener('click', () => reload(todayRiyadh()));
+  syncNowBtn.addEventListener('click', () => runSync({ quiet: false }));
+
+  const unsub = subscribeSyncStatus((s) => paintSync(s));
+  wrap.addEventListener(
+    'remove',
+    () => unsub(),
+    { once: true }
+  );
+  // Fallback cleanup when navigating away (node removed without remove event)
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(wrap)) {
+      unsub();
+      obs.disconnect();
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
 
   await reload(date);
   searchEl.focus({ preventScroll: true });

@@ -79,6 +79,11 @@ export default {
   // Sync / toast
   synced: 'Synced to Drive',
   syncFailed: 'Sync failed — try again later',
+  syncNow: 'Sync Now',
+  syncing: 'Syncing…',
+  syncPending: 'Pending upload',
+  syncIdle: 'Not synced yet',
+  lastSync: 'Last sync',
   roleOps: 'ops',
   roleTeacher: 'teacher'
 };
