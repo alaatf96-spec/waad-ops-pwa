@@ -121,5 +121,8 @@ export default {
   tfLogIncident: 'تسجيل حادثة',
   tfNoteSaved: 'تم حفظ القيد ومزامنته',
   tfRecordedBy: 'سجّلها',
-  tfAddEntry: 'تسجيل قيد',
+  tfAddEntry: '+ قيد',
+  tfLogSection: 'السجل / الحوادث',
+  tfLogSectionHint: 'اضغط + لإضافة إنجاز أو مشكلة أو حادثة.',
+  tfFabNewLog: 'قيد جديد',
 };

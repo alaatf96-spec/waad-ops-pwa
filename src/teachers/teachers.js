@@ -268,6 +268,20 @@ export async function renderTeachers(root) {
       </div>`;
   }
 
+  function paintLogSection() {
+    if (showLogForm) return paintLogForm();
+    return `
+      <div class="tf-log-section card-form">
+        <div class="tf-log-section-head">
+          <div>
+            <h3>${t('tfLogSection')}</h3>
+            <p class="muted tf-log-hint">${t('tfLogSectionHint')}</p>
+          </div>
+          <button type="button" class="tf-plus-btn" id="tf-open-log" aria-label="${t('tfFabNewLog')}" title="${t('tfAddEntry')}">+</button>
+        </div>
+      </div>`;
+  }
+
   function paintDetail() {
     if (!selected) {
       return `<p class="muted tf-pick-hint">${t('tfPickTeacher')}</p>`;
@@ -276,7 +290,7 @@ export async function renderTeachers(root) {
       <div class="tf-detail">
         <div class="sections-head" style="margin-bottom:4px">
           <button type="button" class="btn btn-secondary btn-sm" id="tf-back-list">${t('tfBackList')}</button>
-          <button type="button" class="btn btn-primary btn-sm" id="tf-open-log">${t('tfAddEntry')}</button>
+          <button type="button" class="btn btn-primary btn-sm" id="tf-open-log-top">${t('tfAddEntry')}</button>
         </div>
         <div class="tf-detail-head card-form">
           <h3>${escapeHtml(selected.name)}</h3>
@@ -292,7 +306,12 @@ export async function renderTeachers(root) {
             ${savingRatings ? t('syncing') : t('tfSaveRatings')}
           </button>
         </div>
-        ${showLogForm ? paintLogForm() : ''}
+        ${paintLogSection()}
+        ${
+          !showLogForm
+            ? `<button type="button" class="tf-fab" id="tf-fab-log" aria-label="${t('tfFabNewLog')}" title="${t('tfAddEntry')}">+</button>`
+            : ''
+        }
       </div>`;
   }
 
@@ -397,12 +416,15 @@ export async function renderTeachers(root) {
       paint();
     });
 
-    wrap.querySelector('#tf-open-log')?.addEventListener('click', () => {
+    function openLogForm() {
       showLogForm = true;
       noteDate = todayRiyadh();
       paint();
       wrap.querySelector('#tf-note-text')?.focus();
-    });
+    }
+    wrap.querySelector('#tf-open-log')?.addEventListener('click', openLogForm);
+    wrap.querySelector('#tf-open-log-top')?.addEventListener('click', openLogForm);
+    wrap.querySelector('#tf-fab-log')?.addEventListener('click', openLogForm);
 
     wrap.querySelector('#tf-cancel-note')?.addEventListener('click', () => {
       showLogForm = false;

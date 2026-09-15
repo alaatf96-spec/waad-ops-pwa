@@ -121,5 +121,8 @@ export default {
   tfLogIncident: 'Log incident',
   tfNoteSaved: 'Entry saved & synced',
   tfRecordedBy: 'Recorded by',
-  tfAddEntry: 'Log entry',
+  tfAddEntry: '+ Log entry',
+  tfLogSection: 'Incident / HR log',
+  tfLogSectionHint: 'Tap + to add an achievement, issue, or incident.',
+  tfFabNewLog: 'New log entry',
 };

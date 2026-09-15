@@ -48,8 +48,9 @@ Base: existing WaadOpsUpload web app. **TOKEN unchanged.**
 | `teacher-note` | `teacherName`, `noteType`, `text` | Append note + log row |
 | `teacher-ratings` | `teacherName`, `classroom`, `betweenClass`, `duty` | Rebuild rating bars (1–5) |
 | `teacher-attendance-sync` | `teacherName`, `date?`, rates? | Front-page attendance KPIs |
+| `upgrade-teacher-docs` | `teacherName?`, `offset`, `limit` | Restyle Docs to premium template (preserve log) |
 
-`doGet` reports `teacherFolders: true`, `premiumBrand: true`.
+`doGet` reports `teacherFolders: true`, `premiumBrand: true`, `upgradeTeacherDocs: true`.
 
 ## Drive layout
 

@@ -12,7 +12,10 @@
  *   (#, Staff, Role, Status, Time, Notes + KPI summary).
  *
  * teacher-note / teacher-ratings / teacher-attendance-sync / teacher-scaffold:
- *   Staff HR Docs under 06_Teacher_HR.
+ *   Staff HR Docs under 06_Teacher_HR (premium visual template).
+ *
+ * upgrade-teacher-docs / upgradeExistingTeacherDocs_ — restyle Staff Performance Docs
+ *   (preserve chronological log + section bullets). Helmy/Hilmi aliases supported.
  *
  * bootstrapStudentReports(roster) — one-shot student Docs (do NOT bulk ~223 unless asked).
  * upgrade-student-docs / upgradeExistingStudentDocs_ — restyle G4/G5/G6 Docs (preserve incident tables).
@@ -103,6 +106,38 @@ var TEACHER_ROSTER = [
   { id: "t50", name: "Yamen Zahreddine", role: "teacher" },
 ];
 
+/** Alternate folder/Doc spellings (Helmy vs Hilmi, etc.) */
+var TEACHER_NAME_ALIASES = {
+  'Mohammed Hilmi': ['Mohammad Helmy', 'Mohammed Helmy', 'Mohammad Hilmi', 'Helmy'],
+  'Mohammad Helmy': ['Mohammed Hilmi', 'Mohammed Helmy', 'Mohammad Hilmi', 'Helmy'],
+  'Aladdin Alferjani': ['Aladdin Ferjani', 'Aladin Alferjani']
+};
+
+function teacherNameCandidates_(name) {
+  var primary = String(name || '').replace(/\s+/g, ' ').trim();
+  var out = [primary];
+  var aliases = TEACHER_NAME_ALIASES[primary] || [];
+  for (var i = 0; i < aliases.length; i++) {
+    if (out.indexOf(aliases[i]) < 0) out.push(aliases[i]);
+  }
+  // Also reverse-lookup: if incoming is an alias, include canonical keys
+  for (var key in TEACHER_NAME_ALIASES) {
+    if (!Object.prototype.hasOwnProperty.call(TEACHER_NAME_ALIASES, key)) continue;
+    var list = TEACHER_NAME_ALIASES[key];
+    for (var j = 0; j < list.length; j++) {
+      if (String(list[j]).toLowerCase() === primary.toLowerCase() ||
+          key.toLowerCase() === primary.toLowerCase()) {
+        if (out.indexOf(key) < 0) out.push(key);
+        for (var k = 0; k < list.length; k++) {
+          if (out.indexOf(list[k]) < 0) out.push(list[k]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+
 function doPost(e) {
   try {
     var body = {};
@@ -151,6 +186,9 @@ function doPost(e) {
     if (kind === 'upgrade-student-docs') {
       return json_(handleUpgradeStudentDocs_(body));
     }
+    if (kind === 'upgrade-teacher-docs') {
+      return json_(handleUpgradeTeacherDocs_(body));
+    }
 
     var name = body.name || ('upload-' + new Date().toISOString() + '.csv');
     var content = body.content || '';
@@ -184,7 +222,8 @@ function doGet() {
     branded: true,
     premiumBrand: true,
     teacherFolders: true,
-    upgradeStudentDocs: true
+    upgradeStudentDocs: true,
+    upgradeTeacherDocs: true
   });
 }
 
@@ -1061,7 +1100,24 @@ function ensureTeacherFolders_(roster) {
 function findOrCreateTeacherReportDoc_(folder, title, meta) {
   var it = folder.getFilesByName(title);
   if (it.hasNext()) {
-    return { doc: DocumentApp.openById(it.next().getId()), created: false };
+    var existing = DocumentApp.openById(it.next().getId());
+    // Half-built stubs (plain text sample) get upgraded to premium template
+    if (isTeacherDocStub_(existing.getBody())) {
+      var preserved = extractTeacherNotesAndLog_(existing.getBody());
+      buildTeacherReportBody_(existing.getBody(), meta, {
+        classroom: preserved.classroom != null ? preserved.classroom : 3,
+        betweenClass: preserved.betweenClass != null ? preserved.betweenClass : 3,
+        duty: preserved.duty != null ? preserved.duty : 3,
+        presentRate: preserved.presentRate || '—',
+        lateRate: preserved.lateRate || '—',
+        absentRate: preserved.absentRate || '—',
+        lastSync: preserved.lastSync || 'Not synced'
+      });
+      restoreTeacherNotesAndLog_(existing.getBody(), preserved);
+      existing.saveAndClose();
+      return { doc: DocumentApp.openById(existing.getId()), created: false, upgradedStub: true };
+    }
+    return { doc: existing, created: false };
   }
   var doc = DocumentApp.create(title);
   var file = DriveApp.getFileById(doc.getId());
@@ -1080,6 +1136,22 @@ function findOrCreateTeacherReportDoc_(folder, title, meta) {
   });
   doc.saveAndClose();
   return { doc: DocumentApp.openById(doc.getId()), created: true };
+}
+
+/** True when Doc looks like old plain-text scaffold (no rating grid / log table). */
+function isTeacherDocStub_(body) {
+  try {
+    if (!findLogTable_(body)) return true;
+    // Premium template has multiple tables (profile, KPI, ratings, log)
+    var tables = 0;
+    var n = body.getNumChildren();
+    for (var i = 0; i < n; i++) {
+      if (body.getChild(i).getType() === DocumentApp.ElementType.TABLE) tables++;
+    }
+    return tables < 3;
+  } catch (e) {
+    return true;
+  }
 }
 
 /** HR adult professional Doc (different from student behavioral). */
@@ -1112,13 +1184,13 @@ function buildTeacherReportBody_(body, meta, scores) {
     .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
     .setForegroundColor(WAAD_NAVY)
     .setBold(true)
-    .setFontSize(16);
+    .setFontSize(18);
 
   body.appendParagraph(String(meta.name || ''))
     .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
     .setForegroundColor(WAAD_MAGENTA)
     .setBold(true)
-    .setFontSize(13);
+    .setFontSize(14);
 
   body.appendParagraph('Boys School · Jeddah · Academic Year 2026–2027')
     .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
@@ -1135,12 +1207,13 @@ function buildTeacherReportBody_(body, meta, scores) {
   ]);
   styleMetaTable_(profile);
 
-  // Attendance metrics
+  // Attendance KPI visual row
   sectionHeading_(body, '2. Attendance metrics', WAAD_CYAN);
+  appendAttendanceKpiRow_(body, scores);
   var att = body.appendTable([
-    ['Present rate', String(scores.presentRate) + (String(scores.presentRate).indexOf('%') >= 0 || scores.presentRate === '—' ? '' : '%'),
-     'Late rate', String(scores.lateRate) + (String(scores.lateRate).indexOf('%') >= 0 || scores.lateRate === '—' ? '' : '%')],
-    ['Absent rate', String(scores.absentRate) + (String(scores.absentRate).indexOf('%') >= 0 || scores.absentRate === '—' ? '' : '%'),
+    ['Present rate', fmtRate_(scores.presentRate),
+     'Late rate', fmtRate_(scores.lateRate)],
+    ['Absent rate', fmtRate_(scores.absentRate),
      'Last sync', String(scores.lastSync || 'Not synced')]
   ]);
   styleMetaTable_(att);
@@ -1150,6 +1223,8 @@ function buildTeacherReportBody_(body, meta, scores) {
 
   // Ratings with visual bars
   sectionHeading_(body, '3. Classroom management rating', WAAD_MAGENTA);
+  body.appendParagraph('Scale: 1 = needs support · 5 = excellent')
+    .setFontSize(8).setForegroundColor('#666666');
   appendRatingBar_(body, 'Classroom management', scores.classroom || 3);
 
   sectionHeading_(body, '4. Between-class tardiness', WAAD_ORANGE);
@@ -1158,6 +1233,8 @@ function buildTeacherReportBody_(body, meta, scores) {
   appendRatingBar_(body, 'Between-class tardiness', scores.betweenClass || 3);
 
   sectionHeading_(body, '5. Duty tardiness', WAAD_CYAN);
+  body.appendParagraph('Scale: 1 = frequent tardiness · 5 = exemplary punctuality')
+    .setFontSize(8).setForegroundColor('#666666');
   appendRatingBar_(body, 'Duty tardiness', scores.duty || 3);
 
   sectionHeading_(body, '6. Achievements', WAAD_CYAN);
@@ -1187,10 +1264,25 @@ function buildTeacherReportBody_(body, meta, scores) {
   appendConfidentialFooter_(body, 'Staff HR professional record · Adults only · Ops confidential');
 }
 
+function fmtRate_(v) {
+  var s = String(v == null ? '—' : v);
+  if (s === '—' || s.indexOf('%') >= 0) return s;
+  if (s === '' || s.toLowerCase() === 'nan') return '—';
+  return s + '%';
+}
+
 function sectionHeading_(body, text, accent) {
   body.appendParagraph('');
-  var p = body.appendParagraph(text);
-  p.setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(12).setSpacingAfter(2);
+  // Colored accent bar + title as a 2-cell table for stronger visuals
+  var bar = body.appendTable([[' ', text]]);
+  bar.setBorderWidth(0);
+  try {
+    bar.setColumnWidth(0, 10);
+    bar.setColumnWidth(1, 480);
+  } catch (eW) {}
+  bar.getCell(0, 0).setBackgroundColor(accent || WAAD_CYAN);
+  bar.getCell(0, 1).setBackgroundColor(WAAD_NAVY_SOFT)
+    .editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(12);
   appendAccentRule_(body, accent || WAAD_CYAN);
 }
 
@@ -1208,25 +1300,50 @@ function styleMetaTable_(table) {
   }
 }
 
-/** 5-cell rating bar: filled navy/cyan up to score. */
+/** 5-cell rating bar: filled navy/cyan up to score, digit labels. */
 function appendRatingBar_(body, label, score) {
   var s = Math.max(1, Math.min(5, Number(score) || 3));
   body.appendParagraph(label + ': ' + s + ' / 5')
     .setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(10);
   var cells = [];
-  for (var i = 1; i <= 5; i++) cells.push(i <= s ? '●' : '○');
+  for (var i = 1; i <= 5; i++) cells.push(String(i));
   var t = body.appendTable([cells]);
-  t.setBorderWidth(0);
+  t.setBorderWidth(0.5);
+  t.setBorderColor(WAAD_NAVY);
   for (var c = 0; c < 5; c++) {
     var cell = t.getCell(0, c);
     if (c < s) {
-      cell.setBackgroundColor(c < s - 1 ? WAAD_NAVY : WAAD_CYAN);
-      cell.editAsText().setForegroundColor('#FFFFFF').setBold(true);
+      cell.setBackgroundColor(c === s - 1 ? WAAD_CYAN : WAAD_NAVY);
+      cell.editAsText().setForegroundColor('#FFFFFF').setBold(true).setFontSize(11);
     } else {
-      cell.setBackgroundColor('#E0E0E0');
-      cell.editAsText().setForegroundColor('#999999');
+      cell.setBackgroundColor('#ECEFF5');
+      cell.editAsText().setForegroundColor('#9AA0B8').setFontSize(11);
     }
-    try { t.setColumnWidth(c, 36); } catch (e) {}
+    try { t.setColumnWidth(c, 48); } catch (e) {}
+  }
+}
+
+/** Big Present / Late / Absent KPI tiles. */
+function appendAttendanceKpiRow_(body, scores) {
+  var p = fmtRate_(scores.presentRate);
+  var l = fmtRate_(scores.lateRate);
+  var a = fmtRate_(scores.absentRate);
+  var t = body.appendTable([
+    ['PRESENT', 'LATE', 'ABSENT'],
+    [p, l, a]
+  ]);
+  t.setBorderWidth(0);
+  try {
+    t.setColumnWidth(0, 160);
+    t.setColumnWidth(1, 160);
+    t.setColumnWidth(2, 160);
+  } catch (eK) {}
+  var colors = [WAAD_NAVY, WAAD_CYAN, WAAD_MAGENTA];
+  for (var c = 0; c < 3; c++) {
+    t.getCell(0, c).setBackgroundColor(colors[c])
+      .editAsText().setForegroundColor('#FFFFFF').setBold(true).setFontSize(9);
+    t.getCell(1, c).setBackgroundColor(c === 0 ? WAAD_NAVY_SOFT : (c === 1 ? '#E0F7FA' : '#FCE4EC'))
+      .editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(16);
   }
 }
 
@@ -1235,18 +1352,24 @@ function appendAttendanceMixBar_(body, scores) {
   var l = parseFloat(scores.lateRate);
   var a = parseFloat(scores.absentRate);
   if (isNaN(p) && isNaN(l) && isNaN(a)) {
-    var placeholder = body.appendTable([[' ', ' ', ' ']]);
+    var placeholder = body.appendTable([['P', 'L', 'A', ' ', ' ', ' ', ' ', ' ', ' ', ' ']]);
     placeholder.setBorderWidth(0);
-    placeholder.getCell(0, 0).setBackgroundColor(WAAD_NAVY);
-    placeholder.getCell(0, 1).setBackgroundColor(WAAD_CYAN);
-    placeholder.getCell(0, 2).setBackgroundColor('#EEEEEE');
+    placeholder.getCell(0, 0).setBackgroundColor(WAAD_NAVY).editAsText().setForegroundColor('#FFFFFF').setFontSize(7);
+    placeholder.getCell(0, 1).setBackgroundColor(WAAD_CYAN).editAsText().setForegroundColor('#FFFFFF').setFontSize(7);
+    placeholder.getCell(0, 2).setBackgroundColor(WAAD_MAGENTA).editAsText().setForegroundColor('#FFFFFF').setFontSize(7);
+    for (var z = 3; z < 10; z++) {
+      placeholder.getCell(0, z).setBackgroundColor('#EEEEEE');
+      try { placeholder.setColumnWidth(z, 28); } catch (ez) {}
+    }
+    for (var z0 = 0; z0 < 3; z0++) {
+      try { placeholder.setColumnWidth(z0, 28); } catch (ez2) {}
+    }
     return;
   }
   p = isNaN(p) ? 0 : p;
   l = isNaN(l) ? 0 : l;
   a = isNaN(a) ? 0 : a;
   var sum = p + l + a || 1;
-  // 10-cell bar proportional
   var cells = [];
   var labels = [];
   var np = Math.round(10 * p / sum);
@@ -1273,25 +1396,92 @@ function appendAttendanceMixBar_(body, scores) {
 
 function openTeacherDocByName_(teacherName) {
   var hr = DriveApp.getFolderById(TEACHER_HR);
-  var folders = hr.getFoldersByName(String(teacherName).replace(/\s+/g, ' ').trim());
-  if (!folders.hasNext()) {
-    // try scaffold one
-    var sc = ensureTeacherFolders_([{ id: '', name: teacherName, role: 'teacher' }]);
+  var candidates = teacherNameCandidates_(teacherName);
+  var folder = null;
+  var matchedName = String(teacherName).replace(/\s+/g, ' ').trim();
+  for (var i = 0; i < candidates.length; i++) {
+    var folders = hr.getFoldersByName(candidates[i]);
+    if (folders.hasNext()) {
+      folder = folders.next();
+      matchedName = candidates[i];
+      break;
+    }
+  }
+  if (!folder) {
+    // Prefer roster canonical name for new folders
+    var rosterHit = null;
+    for (var r = 0; r < TEACHER_ROSTER.length; r++) {
+      var rn = String(TEACHER_ROSTER[r].name || '');
+      for (var c = 0; c < candidates.length; c++) {
+        if (rn.toLowerCase() === candidates[c].toLowerCase()) {
+          rosterHit = TEACHER_ROSTER[r];
+          break;
+        }
+      }
+      if (rosterHit) break;
+    }
+    var createName = rosterHit ? rosterHit.name : matchedName;
+    var createId = rosterHit ? rosterHit.id : '';
+    var createRole = rosterHit ? rosterHit.role : 'teacher';
+    var sc = ensureTeacherFolders_([{ id: createId, name: createName, role: createRole }]);
     if (!sc.ok || !sc.results.length) throw new Error('Teacher folder not found: ' + teacherName);
     return DocumentApp.openById(sc.results[0].docId);
   }
-  var folder = folders.next();
-  var title = 'Staff Performance & Conduct Report — ' + teacherName;
-  var files = folder.getFilesByName(title);
-  if (!files.hasNext()) {
-    var report = findOrCreateTeacherReportDoc_(folder, title, {
-      name: teacherName,
+  // Prefer exact title for matched folder name; also try other candidate titles
+  var docFile = null;
+  for (var t = 0; t < candidates.length; t++) {
+    var title = 'Staff Performance & Conduct Report — ' + candidates[t];
+    var files = folder.getFilesByName(title);
+    if (files.hasNext()) {
+      docFile = files.next();
+      matchedName = candidates[t];
+      break;
+    }
+  }
+  if (!docFile) {
+    // Any Staff Performance Doc in folder
+    var any = folder.getFiles();
+    while (any.hasNext()) {
+      var f = any.next();
+      if (f.getMimeType() === MimeType.GOOGLE_DOCS &&
+          String(f.getName()).indexOf('Staff Performance') === 0) {
+        docFile = f;
+        break;
+      }
+    }
+  }
+  if (!docFile) {
+    var report = findOrCreateTeacherReportDoc_(folder, 'Staff Performance & Conduct Report — ' + matchedName, {
+      name: matchedName,
       id: '',
       role: 'teacher'
     });
     return report.doc;
   }
-  return DocumentApp.openById(files.next().getId());
+  return DocumentApp.openById(docFile.getId());
+}
+
+
+/** Find child index of a section heading (paragraph or accent-bar table). */
+function findSectionHeadingIndex_(body, heading) {
+  var n = body.getNumChildren();
+  for (var i = 0; i < n; i++) {
+    var child = body.getChild(i);
+    if (child.getType() === DocumentApp.ElementType.PARAGRAPH) {
+      if (String(child.asParagraph().getText()).indexOf(heading) >= 0) return i;
+    } else if (child.getType() === DocumentApp.ElementType.TABLE) {
+      try {
+        var t = child.asTable();
+        if (t.getNumRows() > 0) {
+          var row = t.getRow(0);
+          for (var c = 0; c < row.getNumCells(); c++) {
+            if (String(row.getCell(c).getText()).indexOf(heading) >= 0) return i;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+  return -1;
 }
 
 function handleTeacherNote_(body) {
@@ -1329,32 +1519,26 @@ function handleTeacherNote_(body) {
   var heading = sectionMap[noteType];
   var inserted = false;
   if (heading) {
-    var n = bodyEl.getNumChildren();
-    for (var i = 0; i < n; i++) {
-      var child = bodyEl.getChild(i);
-      if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
-      var p = child.asParagraph();
-      if (String(p.getText()).indexOf(heading) === 0) {
-        for (var j = i + 1; j < Math.min(i + 6, bodyEl.getNumChildren()); j++) {
-          var ch2 = bodyEl.getChild(j);
-          if (ch2.getType() === DocumentApp.ElementType.PARAGRAPH) {
-            var p2 = ch2.asParagraph();
-            var t2 = String(p2.getText()).trim();
-            if (t2 === '—' || t2 === '-') {
-              p2.setText('• [' + date + '] ' + logText);
-              p2.setForegroundColor('#222222');
-              inserted = true;
-              break;
-            }
-            if (t2.indexOf('•') === 0 || t2.length > 1) {
-              bodyEl.insertParagraph(j + 1, '• [' + date + '] ' + logText)
-                .setForegroundColor('#222222');
-              inserted = true;
-              break;
-            }
+    var i = findSectionHeadingIndex_(bodyEl, heading);
+    if (i >= 0) {
+      for (var j = i + 1; j < Math.min(i + 8, bodyEl.getNumChildren()); j++) {
+        var ch2 = bodyEl.getChild(j);
+        if (ch2.getType() === DocumentApp.ElementType.PARAGRAPH) {
+          var p2 = ch2.asParagraph();
+          var t2 = String(p2.getText()).trim();
+          if (t2 === '—' || t2 === '-') {
+            p2.setText('• [' + date + '] ' + logText);
+            p2.setForegroundColor('#222222');
+            inserted = true;
+            break;
+          }
+          if (t2.indexOf('•') === 0 || t2.length > 1) {
+            bodyEl.insertParagraph(j + 1, '• [' + date + '] ' + logText)
+              .setForegroundColor('#222222');
+            inserted = true;
+            break;
           }
         }
-        break;
       }
     }
   }
@@ -1449,21 +1633,71 @@ function extractTeacherNotesAndLog_(body) {
     presentRate: '—',
     lateRate: '—',
     absentRate: '—',
-    lastSync: 'Not synced'
+    lastSync: 'Not synced',
+    classroom: 3,
+    betweenClass: 3,
+    duty: 3,
+    metaId: '',
+    metaRole: 'teacher'
   };
-  // Best-effort: scrape bullet lines under section headings + log table
+  // Best-effort: scrape bullet lines under section headings + log table + rates/ratings
   var current = null;
   var n = body.getNumChildren();
   for (var i = 0; i < n; i++) {
     var child = body.getChild(i);
     if (child.getType() === DocumentApp.ElementType.PARAGRAPH) {
       var t = String(child.asParagraph().getText());
-      if (t.indexOf('6. Achievements') === 0) current = 'achievements';
-      else if (t.indexOf('7. Initiatives') === 0) current = 'initiatives';
-      else if (t.indexOf('8. Complaints') === 0) current = 'complaints';
-      else if (t.indexOf('9. Issues') === 0) current = 'issues';
-      else if (t.indexOf('10. Chronological') === 0) current = null;
+      if (t.indexOf('6. Achievements') >= 0) current = 'achievements';
+      else if (t.indexOf('7. Initiatives') >= 0) current = 'initiatives';
+      else if (t.indexOf('8. Complaints') >= 0) current = 'complaints';
+      else if (t.indexOf('9. Issues') >= 0) current = 'issues';
+      else if (t.indexOf('10. Chronological') >= 0) current = null;
       else if (current && t.indexOf('•') === 0) out[current].push(t);
+      // Ratings lines: "Classroom management: 4 / 5"
+      var rm = t.match(/Classroom management:\s*(\d)/i);
+      if (rm) out.classroom = clampScore_(rm[1]);
+      var rb = t.match(/Between-class tardiness:\s*(\d)/i);
+      if (rb) out.betweenClass = clampScore_(rb[1]);
+      var rd = t.match(/Duty tardiness:\s*(\d)/i);
+      if (rd) out.duty = clampScore_(rd[1]);
+    } else if (child.getType() === DocumentApp.ElementType.TABLE) {
+      // Section heading tables: cell text may hold "6. Achievements"
+      try {
+        var tbl = child.asTable();
+        if (tbl.getNumRows() > 0 && tbl.getRow(0).getNumCells() >= 2) {
+          var ht = String(tbl.getCell(0, 1).getText());
+          if (ht.indexOf('6. Achievements') >= 0) current = 'achievements';
+          else if (ht.indexOf('7. Initiatives') >= 0) current = 'initiatives';
+          else if (ht.indexOf('8. Complaints') >= 0) current = 'complaints';
+          else if (ht.indexOf('9. Issues') >= 0) current = 'issues';
+          else if (ht.indexOf('10. Chronological') >= 0) current = null;
+        }
+        // Attendance rate meta table
+        if (tbl.getNumRows() >= 1) {
+          for (var rr = 0; rr < tbl.getNumRows(); rr++) {
+            var row = tbl.getRow(rr);
+            for (var cc = 0; cc + 1 < row.getNumCells(); cc += 2) {
+              var lab = String(row.getCell(cc).getText()).toLowerCase();
+              var val = String(row.getCell(cc + 1).getText()).replace(/%/g, '').trim();
+              if (lab.indexOf('present') === 0) out.presentRate = val || out.presentRate;
+              else if (lab.indexOf('late') === 0) out.lateRate = val || out.lateRate;
+              else if (lab.indexOf('absent') === 0) out.absentRate = val || out.absentRate;
+              else if (lab.indexOf('last sync') === 0) out.lastSync = String(row.getCell(cc + 1).getText()) || out.lastSync;
+              else if (lab.indexOf('staff id') === 0) out.metaId = String(row.getCell(cc + 1).getText()) || out.metaId;
+              else if (lab.indexOf('role') === 0) out.metaRole = String(row.getCell(cc + 1).getText()) || out.metaRole;
+            }
+          }
+        }
+        // KPI tile row: PRESENT/LATE/ABSENT headers
+        if (tbl.getNumRows() >= 2 && tbl.getRow(0).getNumCells() >= 3) {
+          var h0 = String(tbl.getCell(0, 0).getText()).toUpperCase();
+          if (h0.indexOf('PRESENT') === 0) {
+            out.presentRate = String(tbl.getCell(1, 0).getText()).replace(/%/g, '').trim() || out.presentRate;
+            out.lateRate = String(tbl.getCell(1, 1).getText()).replace(/%/g, '').trim() || out.lateRate;
+            out.absentRate = String(tbl.getCell(1, 2).getText()).replace(/%/g, '').trim() || out.absentRate;
+          }
+        }
+      } catch (eTbl) {}
     }
   }
   var log = findLogTable_(body);
@@ -1492,25 +1726,20 @@ function restoreTeacherNotesAndLog_(body, preserved) {
     var heading = map[m][0];
     var lines = map[m][1] || [];
     if (!lines.length) continue;
-    var n = body.getNumChildren();
-    for (var i = 0; i < n; i++) {
-      var child = body.getChild(i);
-      if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
-      if (String(child.asParagraph().getText()).indexOf(heading) !== 0) continue;
-      for (var j = i + 1; j < Math.min(i + 6, body.getNumChildren()); j++) {
-        var ch2 = body.getChild(j);
-        if (ch2.getType() === DocumentApp.ElementType.PARAGRAPH) {
-          var p2 = ch2.asParagraph();
-          if (String(p2.getText()).trim() === '—') {
-            p2.setText(lines[0]);
-            for (var k = 1; k < lines.length; k++) {
-              body.insertParagraph(j + k, lines[k]).setForegroundColor('#222222');
-            }
-            break;
+    var i = findSectionHeadingIndex_(body, heading);
+    if (i < 0) continue;
+    for (var j = i + 1; j < Math.min(i + 8, body.getNumChildren()); j++) {
+      var ch2 = body.getChild(j);
+      if (ch2.getType() === DocumentApp.ElementType.PARAGRAPH) {
+        var p2 = ch2.asParagraph();
+        if (String(p2.getText()).trim() === '—') {
+          p2.setText(lines[0]);
+          for (var k = 1; k < lines.length; k++) {
+            body.insertParagraph(j + k, lines[k]).setForegroundColor('#222222');
           }
+          break;
         }
       }
-      break;
     }
   }
   var log = findLogTable_(body);
@@ -1552,10 +1781,9 @@ function handleTeacherAttendanceSync_(body) {
   var doc = openTeacherDocByName_(teacherName);
   var preserved = extractTeacherNotesAndLog_(doc.getBody());
   // Try to keep existing ratings from body or defaults
-  var classroom = clampScore_(body.classroom != null ? body.classroom : 3);
-  var betweenClass = clampScore_(body.betweenClass != null ? body.betweenClass : 3);
-  var duty = clampScore_(body.duty != null ? body.duty : 3);
-  // Prefer ratings already on doc if not provided — default 3 is fine for stub
+  var classroom = clampScore_(body.classroom != null ? body.classroom : (preserved.classroom != null ? preserved.classroom : 3));
+  var betweenClass = clampScore_(body.betweenClass != null ? body.betweenClass : (preserved.betweenClass != null ? preserved.betweenClass : 3));
+  var duty = clampScore_(body.duty != null ? body.duty : (preserved.duty != null ? preserved.duty : 3));
 
   var lastSync = Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd HH:mm') + ' (' + sourced + ')';
   preserved.presentRate = String(presentRate);
@@ -1647,6 +1875,163 @@ function computeTeacherAttendanceFromSheet_(teacherName, date) {
     return null;
   }
 }
+
+
+/* ═══════════════════ Upgrade teacher Staff Performance Docs ═══════════════════ */
+
+function handleUpgradeTeacherDocs_(body) {
+  var items = body.items || body.docIds || null;
+  var teacherName = body.teacherName || body.name || null;
+  if ((!items || !items.length) && teacherName) {
+    items = collectTeacherReportDocs_([teacherName]);
+  }
+  if (!items || !items.length) {
+    items = collectTeacherReportDocs_(null);
+  }
+  var offset = Math.max(0, Number(body.offset) || 0);
+  var limit = body.limit != null ? Math.max(1, Number(body.limit)) : Math.min(10, items.length);
+  var slice = items.slice(offset, offset + limit);
+  var result = upgradeExistingTeacherDocs_(slice);
+  result.kind = 'upgrade-teacher-docs';
+  result.discovered = items.length;
+  result.offset = offset;
+  result.limit = limit;
+  result.processed = slice.length;
+  result.nextOffset = offset + slice.length;
+  result.done = result.nextOffset >= items.length;
+  return result;
+}
+
+/** Walk 06_Teacher_HR → teacher folders → Staff Performance Docs. */
+function collectTeacherReportDocs_(onlyNames) {
+  var want = null;
+  if (onlyNames && onlyNames.length) {
+    want = {};
+    for (var i = 0; i < onlyNames.length; i++) {
+      var cands = teacherNameCandidates_(onlyNames[i]);
+      for (var c = 0; c < cands.length; c++) {
+        want[String(cands[c]).toLowerCase()] = true;
+      }
+    }
+  }
+  var out = [];
+  var hr = DriveApp.getFolderById(TEACHER_HR);
+  var folders = hr.getFolders();
+  while (folders.hasNext()) {
+    var folder = folders.next();
+    var folderName = folder.getName();
+    if (want && !want[String(folderName).toLowerCase()]) continue;
+    var files = folder.getFiles();
+    while (files.hasNext()) {
+      var f = files.next();
+      if (f.getMimeType() !== MimeType.GOOGLE_DOCS) continue;
+      var title = f.getName();
+      if (String(title).indexOf('Staff Performance') < 0) continue;
+      var tName = folderName;
+      var dash = String(title).indexOf('—');
+      if (dash < 0) dash = String(title).indexOf('-');
+      if (dash >= 0) {
+        tName = String(title).substring(dash + 1).replace(/^\s+/, '').trim() || folderName;
+      }
+      // Match roster id/role when possible
+      var id = '';
+      var role = 'teacher';
+      for (var r = 0; r < TEACHER_ROSTER.length; r++) {
+        var rn = String(TEACHER_ROSTER[r].name || '');
+        var cands2 = teacherNameCandidates_(rn);
+        var hit = false;
+        for (var k = 0; k < cands2.length; k++) {
+          if (cands2[k].toLowerCase() === folderName.toLowerCase() ||
+              cands2[k].toLowerCase() === tName.toLowerCase()) {
+            hit = true;
+            break;
+          }
+        }
+        if (hit) {
+          id = TEACHER_ROSTER[r].id || '';
+          role = TEACHER_ROSTER[r].role || 'teacher';
+          tName = rn;
+          break;
+        }
+      }
+      out.push({
+        docId: f.getId(),
+        teacherName: tName,
+        id: id,
+        role: role,
+        folderName: folderName
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Restyle existing Staff Performance Docs to the premium visual template.
+ * Preserves chronological log rows + section bullet notes + ratings/attendance when scrapeable.
+ */
+function upgradeExistingTeacherDocs_(items) {
+  if (!items || !items.length) {
+    return { ok: false, error: 'No teacher Docs to upgrade (empty items)' };
+  }
+  var upgraded = 0;
+  var skipped = 0;
+  var errors = [];
+  var results = [];
+  for (var i = 0; i < items.length; i++) {
+    try {
+      var item = items[i];
+      var docId = typeof item === 'string' ? item : (item.docId || item.id);
+      // item.id may be staff id — prefer docId
+      if (typeof item === 'object' && item.docId) docId = item.docId;
+      if (!docId) {
+        skipped++;
+        continue;
+      }
+      var doc = DocumentApp.openById(docId);
+      var preserved = extractTeacherNotesAndLog_(doc.getBody());
+      var teacherName = (item && item.teacherName) || guessTeacherNameFromDoc_(doc) || 'Staff';
+      var meta = {
+        name: teacherName,
+        id: (item && item.id) || preserved.metaId || '',
+        role: (item && item.role) || preserved.metaRole || 'teacher'
+      };
+      var scores = {
+        classroom: preserved.classroom != null ? preserved.classroom : 3,
+        betweenClass: preserved.betweenClass != null ? preserved.betweenClass : 3,
+        duty: preserved.duty != null ? preserved.duty : 3,
+        presentRate: preserved.presentRate || '—',
+        lateRate: preserved.lateRate || '—',
+        absentRate: preserved.absentRate || '—',
+        lastSync: preserved.lastSync || 'Not synced'
+      };
+      buildTeacherReportBody_(doc.getBody(), meta, scores);
+      restoreTeacherNotesAndLog_(doc.getBody(), preserved);
+      doc.saveAndClose();
+      upgraded++;
+      results.push({
+        docId: docId,
+        teacherName: teacherName,
+        url: 'https://docs.google.com/document/d/' + docId + '/edit',
+        logRows: (preserved.log || []).length
+      });
+    } catch (err) {
+      errors.push(String(err));
+    }
+  }
+  return { ok: true, upgraded: upgraded, skipped: skipped, errors: errors, results: results };
+}
+
+function guessTeacherNameFromDoc_(doc) {
+  try {
+    var title = doc.getName() || '';
+    var dash = title.indexOf('—');
+    if (dash < 0) dash = title.indexOf('-');
+    if (dash >= 0) return title.substring(dash + 1).replace(/^\s+/, '').trim();
+  } catch (e) {}
+  return '';
+}
+
 
 /**
  * One-shot bootstrap: pass array of {name, waadId|studentId, grade, section|color}.
