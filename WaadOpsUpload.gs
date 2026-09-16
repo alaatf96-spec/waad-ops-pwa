@@ -192,6 +192,16 @@ function doPost(e) {
       return json_(handleUpgradeTeacherDocs_(body));
     }
 
+    if (kind === 'drive-search') {
+      return json_(handleDriveSearch_(body));
+    }
+    if (kind === 'health-snapshots') {
+      return json_(handleHealthSnapshots_(body));
+    }
+    if (kind === 'list-folder') {
+      return json_(handleListFolder_(body));
+    }
+
     var name = body.name || ('upload-' + new Date().toISOString() + '.csv');
     var content = body.content || '';
     var mime = body.mimeType || 'text/csv';
@@ -225,7 +235,10 @@ function doGet() {
     premiumBrand: true,
     teacherFolders: true,
     upgradeStudentDocs: true,
-    upgradeTeacherDocs: true
+    upgradeTeacherDocs: true,
+    driveSearch: true,
+    healthSnapshots: true,
+    listFolder: true
   });
 }
 
@@ -2172,3 +2185,474 @@ function bootstrapStudentReports(roster) {
   }
   return { ok: true, created: created, existing: existing, errors: errors };
 }
+
+/* ═══════════════════ Drive search / health snapshots ═══════════════════ */
+
+function handleDriveSearch_(body) {
+  var q = String(body.query || body.name || body.title || '').trim();
+  if (!q) return { ok: false, error: 'query required' };
+  var type = String(body.type || 'folder').toLowerCase(); // folder|file|any
+  var limit = Math.min(Number(body.limit) || 25, 100);
+  var results = [];
+  if (type === 'folder' || type === 'any') {
+    var folders = DriveApp.getFoldersByName(q);
+    while (folders.hasNext() && results.length < limit) {
+      var f = folders.next();
+      results.push({
+        id: f.getId(),
+        name: f.getName(),
+        mimeType: 'application/vnd.google-apps.folder',
+        url: f.getUrl(),
+        owner: safeOwnerEmail_(f),
+        lastUpdated: f.getLastUpdated() ? f.getLastUpdated().toISOString() : null
+      });
+    }
+    // also try case variants
+    if (results.length === 0 && q !== q.toLowerCase()) {
+      folders = DriveApp.getFoldersByName(q.toLowerCase());
+      while (folders.hasNext() && results.length < limit) {
+        var f2 = folders.next();
+        results.push({
+          id: f2.getId(),
+          name: f2.getName(),
+          mimeType: 'application/vnd.google-apps.folder',
+          url: f2.getUrl(),
+          owner: safeOwnerEmail_(f2),
+          lastUpdated: f2.getLastUpdated() ? f2.getLastUpdated().toISOString() : null
+        });
+      }
+    }
+  }
+  if (type === 'file' || type === 'any') {
+    var files = DriveApp.getFilesByName(q);
+    while (files.hasNext() && results.length < limit) {
+      var file = files.next();
+      results.push({
+        id: file.getId(),
+        name: file.getName(),
+        mimeType: file.getMimeType(),
+        url: file.getUrl(),
+        owner: safeOwnerEmail_(file),
+        lastUpdated: file.getLastUpdated() ? file.getLastUpdated().toISOString() : null
+      });
+    }
+  }
+  return { ok: true, kind: 'drive-search', query: q, type: type, count: results.length, results: results };
+}
+
+function safeOwnerEmail_(fileOrFolder) {
+  try {
+    var owners = fileOrFolder.getOwners();
+    if (owners && owners.length) return owners[0].getEmail();
+  } catch (e) {}
+  return null;
+}
+
+function handleListFolder_(body) {
+  var folderId = body.folderId || body.id;
+  if (!folderId) return { ok: false, error: 'folderId required' };
+  var folder = DriveApp.getFolderById(folderId);
+  var limit = Math.min(Number(body.limit) || 200, 500);
+  var items = [];
+  var files = folder.getFiles();
+  while (files.hasNext() && items.length < limit) {
+    var file = files.next();
+    items.push({
+      id: file.getId(),
+      name: file.getName(),
+      mimeType: file.getMimeType(),
+      url: file.getUrl(),
+      lastUpdated: file.getLastUpdated() ? file.getLastUpdated().toISOString() : null
+    });
+  }
+  var sub = folder.getFolders();
+  while (sub.hasNext() && items.length < limit) {
+    var sf = sub.next();
+    items.push({
+      id: sf.getId(),
+      name: sf.getName(),
+      mimeType: 'application/vnd.google-apps.folder',
+      url: sf.getUrl(),
+      lastUpdated: sf.getLastUpdated() ? sf.getLastUpdated().toISOString() : null
+    });
+  }
+  return {
+    ok: true,
+    kind: 'list-folder',
+    folderId: folderId,
+    folderName: folder.getName(),
+    count: items.length,
+    items: items
+  };
+}
+
+/**
+ * health-snapshots: read Student Health source folder/sheet and write condensed
+ * Waad-branded operational snapshots into matching G4–6 boys behavior folders.
+ * body: { folderId?, query?, roster?:[{name,waadId,grade,color}], dryRun?, limit? }
+ */
+function handleHealthSnapshots_(body) {
+  var folderId = body.folderId;
+  var searchName = body.query || body.folderName || 'Student Health';
+  if (!folderId) {
+    var found = DriveApp.getFoldersByName(searchName);
+    if (!found.hasNext()) {
+      found = DriveApp.getFoldersByName('student health');
+    }
+    if (!found.hasNext()) {
+      return { ok: false, error: 'Student Health folder not found', searched: searchName };
+    }
+    var best = found.next();
+    folderId = best.getId();
+    // prefer most recently updated if multiple
+    while (found.hasNext()) {
+      var cand = found.next();
+      try {
+        if (cand.getLastUpdated() > best.getLastUpdated()) {
+          best = cand;
+          folderId = best.getId();
+        }
+      } catch (ePref) {}
+    }
+  }
+  var healthFolder = DriveApp.getFolderById(folderId);
+  var roster = body.roster || [];
+  if (typeof roster === 'string') {
+    try { roster = JSON.parse(roster); } catch (eR) { roster = []; }
+  }
+  var rosterIndex = buildRosterIndex_(roster);
+  var extracted = extractHealthRecords_(healthFolder, body);
+  var matched = [];
+  var skipped = [];
+  for (var i = 0; i < extracted.length; i++) {
+    var rec = extracted[i];
+    var hit = matchRosterStudent_(rec, rosterIndex);
+    if (!hit) {
+      skipped.push({ name: rec.studentName || rec.rawName || '', reason: 'not_on_g4_6_boys_roster' });
+      continue;
+    }
+    matched.push({ rec: rec, student: hit });
+  }
+  var dryRun = !!body.dryRun;
+  var limit = Math.min(Number(body.limit) || matched.length, 200);
+  var created = [];
+  var errors = [];
+  for (var j = 0; j < Math.min(matched.length, limit); j++) {
+    var m = matched[j];
+    try {
+      if (dryRun) {
+        created.push({
+          dryRun: true,
+          studentName: m.student.name,
+          waadId: m.student.waadId,
+          grade: m.student.grade,
+          color: m.student.color,
+          condition: m.rec.condition || m.rec.summary || ''
+        });
+        continue;
+      }
+      var snap = writeHealthSnapshotDoc_(m.student, m.rec);
+      created.push(snap);
+    } catch (err) {
+      errors.push({ student: m.student.name, error: String(err) });
+    }
+  }
+  return {
+    ok: true,
+    kind: 'health-snapshots',
+    healthFolderId: folderId,
+    healthFolderName: healthFolder.getName(),
+    healthFolderUrl: healthFolder.getUrl(),
+    extracted: extracted.length,
+    matched: matched.length,
+    skipped: skipped.length,
+    skippedSample: skipped.slice(0, 15),
+    created: created.length,
+    dryRun: dryRun,
+    results: created,
+    errors: errors
+  };
+}
+
+function buildRosterIndex_(roster) {
+  var byNorm = {};
+  var byId = {};
+  for (var i = 0; i < roster.length; i++) {
+    var s = roster[i];
+    var name = String(s.name || '').replace(/\s+/g, ' ').trim();
+    var key = normalizePersonName_(name);
+    byNorm[key] = s;
+    if (s.waadId) byId[String(s.waadId).toUpperCase()] = s;
+    // also first+last
+    var parts = key.split(' ').filter(Boolean);
+    if (parts.length >= 2) {
+      var fl = parts[0] + ' ' + parts[parts.length - 1];
+      if (!byNorm[fl]) byNorm[fl] = s;
+    }
+  }
+  return { byNorm: byNorm, byId: byId };
+}
+
+function normalizePersonName_(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchRosterStudent_(rec, idx) {
+  if (rec.waadId && idx.byId[String(rec.waadId).toUpperCase()]) {
+    return idx.byId[String(rec.waadId).toUpperCase()];
+  }
+  var n = normalizePersonName_(rec.studentName || rec.rawName || '');
+  if (n && idx.byNorm[n]) return idx.byNorm[n];
+  var parts = n.split(' ').filter(Boolean);
+  if (parts.length >= 2) {
+    var fl = parts[0] + ' ' + parts[parts.length - 1];
+    if (idx.byNorm[fl]) return idx.byNorm[fl];
+  }
+  // fuzzy: first name + last token contained
+  if (parts.length >= 2) {
+    for (var k in idx.byNorm) {
+      if (!Object.prototype.hasOwnProperty.call(idx.byNorm, k)) continue;
+      var kp = k.split(' ');
+      if (kp[0] === parts[0] && kp[kp.length - 1] === parts[parts.length - 1]) {
+        return idx.byNorm[k];
+      }
+    }
+  }
+  return null;
+}
+
+function extractHealthRecords_(healthFolder, body) {
+  var records = [];
+  var files = healthFolder.getFiles();
+  while (files.hasNext()) {
+    var file = files.next();
+    var mime = file.getMimeType();
+    try {
+      if (mime === MimeType.GOOGLE_SHEETS || mime.indexOf('spreadsheet') >= 0) {
+        records = records.concat(extractHealthFromSheet_(file.getId()));
+      } else if (mime === MimeType.GOOGLE_DOCS) {
+        records = records.concat(extractHealthFromDoc_(file.getId(), file.getName()));
+      }
+    } catch (eFile) {
+      // skip unreadable
+    }
+  }
+  // nested folders (one level)
+  var subs = healthFolder.getFolders();
+  while (subs.hasNext()) {
+    var sf = subs.next();
+    var sfiles = sf.getFiles();
+    while (sfiles.hasNext()) {
+      var f2 = sfiles.next();
+      try {
+        var m2 = f2.getMimeType();
+        if (m2 === MimeType.GOOGLE_SHEETS) records = records.concat(extractHealthFromSheet_(f2.getId()));
+        else if (m2 === MimeType.GOOGLE_DOCS) records = records.concat(extractHealthFromDoc_(f2.getId(), f2.getName()));
+      } catch (e2) {}
+    }
+  }
+  if (body && body.records && body.records.length) {
+    records = records.concat(body.records);
+  }
+  return records;
+}
+
+function extractHealthFromSheet_(sheetId) {
+  var ss = SpreadsheetApp.openById(sheetId);
+  var out = [];
+  var sheets = ss.getSheets();
+  for (var s = 0; s < sheets.length; s++) {
+    var sh = sheets[s];
+    var values = sh.getDataRange().getDisplayValues();
+    if (!values || values.length < 2) continue;
+    var headers = values[0].map(function (h) { return String(h || '').toLowerCase().trim(); });
+    var nameIdx = findHeaderIndex_(headers, ['student', 'student name', 'name', 'full name', 'اسم']);
+    var idIdx = findHeaderIndex_(headers, ['waad', 'waad id', 'student id', 'id', 'رقم']);
+    var condIdx = findHeaderIndex_(headers, ['condition', 'diagnosis', 'medical', 'health', 'الحالة', 'مرض']);
+    var allergIdx = findHeaderIndex_(headers, ['allerg', 'allergy', 'allergies', 'حساسية']);
+    var noteIdx = findHeaderIndex_(headers, ['note', 'notes', 'clinic', 'comment', 'accommodat', 'ملاحظات']);
+    var contactIdx = findHeaderIndex_(headers, ['contact', 'clinic contact', 'phone', 'nurse']);
+    var gradeIdx = findHeaderIndex_(headers, ['grade', 'class', 'الصف']);
+    if (nameIdx < 0 && idIdx < 0) continue;
+    for (var r = 1; r < values.length; r++) {
+      var row = values[r];
+      var nm = nameIdx >= 0 ? String(row[nameIdx] || '').trim() : '';
+      var wid = idIdx >= 0 ? String(row[idIdx] || '').trim() : '';
+      if (!nm && !wid) continue;
+      var bits = [];
+      var condition = condIdx >= 0 ? String(row[condIdx] || '').trim() : '';
+      var allergy = allergIdx >= 0 ? String(row[allergIdx] || '').trim() : '';
+      var notes = noteIdx >= 0 ? String(row[noteIdx] || '').trim() : '';
+      var contact = contactIdx >= 0 ? String(row[contactIdx] || '').trim() : '';
+      if (condition) bits.push(condition);
+      if (allergy) bits.push('Allergy: ' + allergy);
+      if (notes) bits.push(notes);
+      out.push({
+        studentName: nm,
+        waadId: wid,
+        gradeHint: gradeIdx >= 0 ? String(row[gradeIdx] || '') : '',
+        condition: condition,
+        allergy: allergy,
+        accommodations: notes,
+        clinicContact: contact,
+        summary: bits.join(' · ').slice(0, 500),
+        source: ss.getName() + ' / ' + sh.getName()
+      });
+    }
+  }
+  return out;
+}
+
+function findHeaderIndex_(headers, candidates) {
+  for (var i = 0; i < headers.length; i++) {
+    var h = headers[i];
+    for (var c = 0; c < candidates.length; c++) {
+      if (h === candidates[c] || h.indexOf(candidates[c]) >= 0) return i;
+    }
+  }
+  return -1;
+}
+
+function extractHealthFromDoc_(docId, fileName) {
+  var doc = DocumentApp.openById(docId);
+  var text = doc.getBody().getText();
+  var nameGuess = String(fileName || '').replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ').trim();
+  // If doc title looks like a student name, treat whole doc as one record
+  var summary = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 600);
+  if (!summary) return [];
+  return [{
+    studentName: nameGuess,
+    rawName: nameGuess,
+    summary: summary,
+    condition: '',
+    allergy: '',
+    accommodations: summary,
+    clinicContact: '',
+    source: fileName
+  }];
+}
+
+function writeHealthSnapshotDoc_(student, rec) {
+  var grade = normalizeGrade_(student.grade);
+  var section = String(student.color || student.section || '').trim();
+  var studentId = String(student.waadId || student.id || 'unknown');
+  var studentName = String(student.name || '').replace(/\s+/g, ' ').trim();
+  var gradeFolder = DriveApp.getFolderById(GRADE_FOLDERS[grade] || STUDENT_ROOT);
+  var folderName = studentName + ' — ' + studentId;
+  var studentFolder = findOrCreateFolder_(gradeFolder, folderName);
+  var title = 'Health Operational Snapshot — ' + studentName;
+  var existing = studentFolder.getFilesByName(title);
+  var doc;
+  var created = false;
+  if (existing.hasNext()) {
+    doc = DocumentApp.openById(existing.next().getId());
+    doc.getBody().clear();
+  } else {
+    doc = DocumentApp.create(title);
+    var file = DriveApp.getFileById(doc.getId());
+    studentFolder.addFile(file);
+    try { DriveApp.getRootFolder().removeFile(file); } catch (e0) {}
+    created = true;
+  }
+  var body = doc.getBody();
+  // Brand header
+  try {
+    var blob = DriveApp.getFileById(WAAD_HEADER_IMAGE_ID).getBlob();
+    body.appendImage(blob).setWidth(520);
+  } catch (eImg) {}
+  appendBrandColorBar_(body);
+  appendAccentRule_(body, WAAD_CYAN);
+  var h = body.appendParagraph('HEALTH OPERATIONAL SNAPSHOT');
+  h.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  h.setForegroundColor(WAAD_NAVY);
+  body.appendParagraph('Waad Academy · Boys School · Confidential operational use')
+    .setForegroundColor(WAAD_MAGENTA).setFontSize(9);
+  appendAccentRule_(body, WAAD_ORANGE);
+
+  var info = body.appendTable([
+    ['Student', studentName, 'WAAD ID', studentId],
+    ['Grade', grade, 'Section', section],
+    ['Snapshot date', Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd'), 'Source', String(rec.source || 'Student Health').slice(0, 40)]
+  ]);
+  styleInfoTable_(info);
+
+  // KPI row
+  var condition = String(rec.condition || '').trim() || '—';
+  var allergy = String(rec.allergy || '').trim() || '—';
+  var flags = [];
+  var blobLow = (String(rec.summary || '') + ' ' + condition + ' ' + allergy).toLowerCase();
+  if (/diabet/i.test(blobLow)) flags.push('Diabetic');
+  if (/allerg/i.test(blobLow)) flags.push('Allergy alert');
+  if (/asthma/i.test(blobLow)) flags.push('Asthma');
+  if (/seizure|epilep/i.test(blobLow)) flags.push('Seizure risk');
+  if (/adhd|asd|autism|sen|iep/i.test(blobLow)) flags.push('Learning/SEN note');
+  var kpi = body.appendTable([[
+    'Flags: ' + (flags.length ? flags.join(' · ') : 'See details'),
+    'Clinic contact: ' + (String(rec.clinicContact || '').trim() || 'As on source file')
+  ]]);
+  kpi.setBorderWidth(0);
+  kpi.getCell(0, 0).setBackgroundColor(WAAD_NAVY_SOFT);
+  kpi.getCell(0, 1).setBackgroundColor('#E0F7FA');
+
+  body.appendParagraph('Operational details (condensed — not a full medical file)')
+    .setBold(true).setForegroundColor(WAAD_NAVY);
+  var detailTable = body.appendTable([
+    ['Item', 'Operational note'],
+    ['Condition / status', condition === '—' && rec.summary ? String(rec.summary).slice(0, 280) : condition],
+    ['Allergies', allergy],
+    ['Accommodations / clinic notes', String(rec.accommodations || rec.summary || '—').slice(0, 400)]
+  ]);
+  styleIncidentTableHeaderLike_(detailTable);
+
+  body.appendParagraph('')
+  body.appendParagraph('No student ages are recorded on this document. Full medical records remain in the source Student Health folder; this page is an ops-facing snapshot only.')
+    .setFontSize(8).setForegroundColor('#666666');
+  appendConfidentialFooter_(body, 'Health operational snapshot · Boys School · Confidential');
+  doc.saveAndClose();
+  return {
+    studentName: studentName,
+    waadId: studentId,
+    grade: grade,
+    color: section,
+    studentFolderId: studentFolder.getId(),
+    docId: doc.getId(),
+    url: 'https://docs.google.com/document/d/' + doc.getId() + '/edit',
+    created: created,
+    flags: flags
+  };
+}
+
+function styleInfoTable_(table) {
+  table.setBorderWidth(0);
+  for (var r = 0; r < table.getNumRows(); r++) {
+    for (var c = 0; c < table.getRow(r).getNumCells(); c++) {
+      var cell = table.getCell(r, c);
+      if (c % 2 === 0) {
+        cell.setBackgroundColor(WAAD_NAVY);
+        cell.editAsText().setForegroundColor('#FFFFFF').setBold(true);
+      } else {
+        cell.setBackgroundColor(WAAD_ROW_ALT);
+      }
+    }
+  }
+}
+
+function styleIncidentTableHeaderLike_(table) {
+  var header = table.getRow(0);
+  for (var c = 0; c < header.getNumCells(); c++) {
+    header.getCell(c).setBackgroundColor(WAAD_NAVY);
+    header.getCell(c).editAsText().setForegroundColor('#FFFFFF').setBold(true);
+  }
+  for (var r = 1; r < table.getNumRows(); r++) {
+    if (r % 2 === 0) {
+      for (var c2 = 0; c2 < table.getRow(r).getNumCells(); c2++) {
+        table.getCell(r, c2).setBackgroundColor(WAAD_ROW_ALT);
+      }
+    }
+  }
+}
+
