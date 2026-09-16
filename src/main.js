@@ -23,6 +23,7 @@ import {
   langSwitcherHtml,
   bindLangSwitcher
 } from './i18n/index.js';
+import { BUILD_LABEL, BUILD_ID } from './buildInfo.js';
 
 const app = document.getElementById('app');
 let syncing = false;
@@ -66,6 +67,32 @@ function toast(msg) {
   el._t = setTimeout(() => el.classList.remove('show'), 2800);
 }
 
+function ensureSwUpdate() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.getRegistration().then((reg) => {
+    if (!reg) return;
+    reg.update().catch(() => {});
+    reg.addEventListener('updatefound', () => {
+      const nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', () => {
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+          // new SW waiting/activated via skipWaiting — reload once to claim
+          toast(t('updateReady') || 'Update ready — refreshing…');
+          setTimeout(() => location.reload(), 600);
+        }
+      });
+    });
+  }).catch(() => {});
+  // When controlling SW changes after skipWaiting/clients.claim
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    location.reload();
+  });
+}
+
 function bindLeaveSync() {
   if (leaveHooksBound) return;
   leaveHooksBound = true;
@@ -88,6 +115,7 @@ function bindLeaveSync() {
 
 async function boot() {
   applyDir(getLang());
+  ensureSwUpdate();
   const linkResult = await tryConsumeUnlockFromHash();
   if (linkResult?.error) {
     sessionStorage.setItem('waad_unlock_err', linkResult.error);
@@ -253,6 +281,7 @@ async function showHome() {
     <p class="home-drive-row">
       <a class="btn btn-secondary btn-block" href="${DRIVE_LINKS.root}" target="_blank" rel="noopener">${t('openDriveHome')}</a>
     </p>
+    <p class="home-build" id="home-build" title="${BUILD_ID}">${t('buildLabel')}: ${BUILD_LABEL}</p>
   `;
   document.getElementById('home-att').addEventListener('click', () => openTool('attendance'));
   document.getElementById('home-beh').addEventListener('click', () => openTool('behavior'));

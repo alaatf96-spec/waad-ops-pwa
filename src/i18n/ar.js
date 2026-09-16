@@ -28,6 +28,8 @@ export default {
   behTitle: 'متابع السلوك',
   behSub: 'صفوف ٤–٦ · مخالفات · تعهدات · مسودة',
   openDriveHome: 'فتح مجلد درايف',
+  buildLabel: 'الإصدار',
+  updateReady: 'تحديث جاهز — جاري التحديث…',
 
   // Attendance
   assemblyAttendance: 'حضور الطابور',

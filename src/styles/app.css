@@ -728,3 +728,15 @@ button { cursor: pointer; touch-action: manipulation; }
   left: max(16px, env(safe-area-inset-left));
 }
 .teachers-panel { position: relative; padding-bottom: 72px; }
+
+.home-build {
+  margin: 18px 0 8px;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(42, 48, 119, 0.55);
+  font-variant-numeric: tabular-nums;
+  user-select: all;
+}
+[dir="rtl"] .home-build { letter-spacing: 0; }

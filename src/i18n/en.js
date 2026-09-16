@@ -28,6 +28,8 @@ export default {
   behTitle: 'Behavior tracker',
   behSub: 'G4–6 incidents · pledges · MoE draft',
   openDriveHome: 'Open Drive folder',
+  buildLabel: 'Build',
+  updateReady: 'Update ready — refreshing…',
 
   // Attendance
   assemblyAttendance: 'Assembly attendance',
