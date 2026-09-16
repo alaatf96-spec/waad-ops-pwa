@@ -14,6 +14,7 @@ import {
   DEFAULT_UPLOAD_TOKEN,
   IDLE_UPLOAD_MS
 } from './driveConfig.js';
+import { toHrProse, toHrAction } from './hrProse.js';
 
 const TOKEN_LS = 'waad_ops_drive_token';
 const META_KEY = 'driveSyncMeta';
@@ -457,6 +458,9 @@ export async function syncBehaviorNow(date = todayRiyadh()) {
 
 /** Single incident payload for long-term Drive append / reports */
 export function buildIncidentPayload(incident, student) {
+  // Standing rule: always HR/professional prose before Drive append.
+  const rawDetails = incident.pledge || incident.details || '';
+  const rawAction = incident.consequence || incident.action || '';
   return {
     studentId: incident.studentId,
     waadId: student?.waadId || incident.studentId || '',
@@ -466,8 +470,9 @@ export function buildIncidentPayload(incident, student) {
     color: student?.color || '',
     date: incident.date,
     category: incident.type || incident.category || '',
-    details: incident.pledge || incident.details || '',
-    action: incident.consequence || incident.action || '',
+    details: toHrProse(rawDetails),
+    action: toHrAction(rawAction),
+    pledge: toHrProse(incident.pledge || ''),
     id: incident.id,
     createdAt: incident.createdAt || null,
     hasPhoto: !!(incident.photoDataUrl)
@@ -531,9 +536,9 @@ export async function uploadTeacherNote(payload) {
       teacherName: payload.teacherName,
       teacherId: payload.teacherId,
       noteType: payload.noteType,
-      text: payload.text,
-      details: payload.text,
-      action: payload.action,
+      text: toHrProse(payload.text || ''),
+      details: toHrProse(payload.text || payload.details || ''),
+      action: toHrAction(payload.action || ''),
       recordedBy: payload.recordedBy,
       date: payload.date,
       role: payload.role

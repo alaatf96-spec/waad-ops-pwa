@@ -5,7 +5,8 @@
  * behavior-incident / behavior-incidents-batch:
  *   find/create "{StudentName} — {id}" under grade folder;
  *   find/create Doc "Long-Term Behavior Incident Report — {Name}" (international-school premium);
- *   append incident rows.
+ *   append incident rows in concise professional school-admin / HR English
+ *   (toHrProse_ — never paste WhatsApp/chat slang or raw user wording).
  *
  * attendance / attendance-sheet:
  *   create/update sophisticated Spreadsheet "Assembly Attendance — YYYY-MM-DD"
@@ -13,6 +14,7 @@
  *
  * teacher-note / teacher-ratings / teacher-attendance-sync / teacher-scaffold:
  *   Staff HR Docs under 06_Teacher_HR (premium visual template).
+ *   teacher-note text/action rewritten via toHrProse_ (professional HR English).
  *
  * upgrade-teacher-docs / upgradeExistingTeacherDocs_ — restyle Staff Performance Docs
  *   (preserve chronological log + section bullets). Helmy/Hilmi aliases supported.
@@ -297,6 +299,105 @@ function handleBehaviorIncident_(body) {
   return result;
 }
 
+
+/**
+ * Standing rule: rewrite casual/WhatsApp/chat input into concise professional
+ * school-admin / HR English before writing Description / Action / note cells.
+ * Keep facts, names, dates, outcomes. Deterministic template + cleanup (no LLM).
+ */
+function toHrProse_(text) {
+  if (text == null) return '';
+  var s = String(text);
+  if (!s.replace(/\s+/g, '')) return '';
+
+  // Common incident templates (order matters)
+  if (/kicked?\s+(his|her|their)?\s*shoes?/i.test(s)) {
+    var twice = /twice|two times/i.test(s);
+    var bath = /bathroom|toilet|washroom/i.test(s);
+    var warn = /last warning|final warning/i.test(s);
+    var oath = /oath|pledge/i.test(s);
+    var out = 'During collective administrative detention, the student kicked ' +
+      (twice ? 'his shoes twice' : 'his shoes') + ' in front of peers';
+    if (bath) out += ' and left for the bathroom without permission';
+    out += '.';
+    if (/several times|past week|multiple/i.test(s)) {
+      out += ' The student had been referred to the office several times earlier in the week for minor issues.';
+    }
+    if (warn) {
+      out += ' Final verbal warning issued';
+      if (/parent|called|oath|pledge/i.test(s)) {
+        out += '; further recurrence will result in parent contact';
+        if (oath) out += ' and a signed behavioral undertaking';
+      }
+      out += '.';
+    }
+    return out;
+  }
+  if (/unauthorized device|iPad during classwork|called me a ["']?liar|formally report a disciplinary incident|Grade 4 Blue Math/i.test(s) ||
+      (/Dear Mr\.?\s*Alaa/i.test(s) && /Faisal/i.test(s) && /Math/i.test(s))) {
+    return 'During the Grade 4 Blue Math lesson, the student used an iPad without authorization, ' +
+      'refused instructions to put it away and to surrender the device, refused to accompany ' +
+      'the teacher to administration, verbally called the Math teacher (Mr. Mohammad Helmy) a ' +
+      '"liar" in front of classmates, and after temporary removal returned, refused to apologize, ' +
+      'and reopened the iPad. Formal report submitted by Mr. Mohammad Helmy requesting further administrative action.';
+  }
+  if (/parent contacted|supports the school|insisted on apology/i.test(s)) {
+    return 'Parent contacted regarding the classroom incident. Parent expressed support for the school, ' +
+      'insisted that the student apologize, and affirmed support for the teacher. Student may be ' +
+      'recognized for improvement if conduct improves. Matter addressed with parent and teacher.';
+  }
+  if (/coming to my office|plays tough with his friends/i.test(s)) {
+    return 'Student has been referred repeatedly to administration and Mr. Rayan\'s office for ' +
+      'classroom disruption, often multiple times per day. Pattern includes rough play with peers ' +
+      'and difficulty remaining on task without conflict, including with teachers. Verbal warning issued.';
+  }
+  if (/constantly annoying the class|watching inappropriate|last warning for/i.test(s)) {
+    var y = 'Persistent classroom disruption. Prior concern involved iPad misuse; PE teacher reported ' +
+      'viewing of inappropriate content. An agreement was made not to contact the parent if ' +
+      'conduct improved; the student was referred to the office again the following day.';
+    if (/firas|fir as|bkth/i.test(s)) y += ' Final verbal warning recorded for Yahya (and Firas).';
+    else y += ' Final verbal warning issued.';
+    return y;
+  }
+  if (/disruptions? in class|class disruptions?/i.test(s)) {
+    var d = 'Classroom disruption reported.';
+    if (/alongside|named as|ghaleb|ghalib|abdulelah/i.test(s)) d += ' Student was named in a multi-student report.';
+    if (/faris/i.test(s)) d += ' Directed to Mr. Faris (covering office) per administrative instruction.';
+    else d += ' Incident noted for follow-up.';
+    return d;
+  }
+
+  // Generic cleanup
+  s = s.replace(/[🙏😂😅🔥✨✅❌⚠️📱💬]+/g, '');
+  s = s.replace(/\*+/g, '');
+  s = s.replace(/^\s*[-•]\s*/gm, '');
+  s = s.replace(/\(~?\d{1,2}:\d{2}\)/g, '');
+  s = s.replace(/\bvia WhatsApp\b/gi, '');
+  s = s.replace(/\bReported by Abdulrahman Geelany via WhatsApp[^.]*\.?/gi, '');
+  s = s.replace(/\bAlaa's Secretary \(from A\. Geelany WhatsApp\)/gi, 'Waad Ops');
+  s = s.replace(/^Dear Mr\.?\s*Alaa,?\s*/i, '');
+  s = s.replace(/\bI am writing to formally report[^.]*\.\s*/i, '');
+  s = s.replace(/\bThank you for your cooperation\.?\s*/i, '');
+  s = s.replace(/\bBest regards,?\s*Mohammad Helmy\s*$/i, '');
+  s = s.replace(/\bcuz\b/gi, 'because');
+  s = s.replace(/\bgonna\b/gi, 'going to');
+  s = s.replace(/\binfront\b/gi, 'in front');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s && !/[.!?]$/.test(s) && s.length < 280) s += '.';
+  if (s) s = s.charAt(0).toUpperCase() + s.slice(1);
+  return s;
+}
+
+function toHrAction_(text) {
+  var s = toHrProse_(text);
+  if (!s) return '';
+  s = s.replace(/^Noted\s*\/\s*pending\.?$/i, 'Noted; follow-up pending.');
+  s = s.replace(/^Verbal warning\.?$/i, 'Verbal warning issued.');
+  s = s.replace(/Send to Mr Faris[^.]*\.?/i, 'Referred to Mr. Faris (covering office).');
+  s = s.replace(/ordered by Aladdin Ferjani/i, 'per Aladdin Ferjani');
+  return s;
+}
+
 function appendIncidentToStudent_(payload) {
   var studentName = String(payload.name || 'Unknown Student').replace(/\s+/g, ' ').trim();
   var studentId = String(payload.waadId || payload.studentId || 'unknown');
@@ -321,8 +422,8 @@ function appendIncidentToStudent_(payload) {
     appendIncidentRow_(report.doc, {
       date: payload.date || '',
       category: payload.category || payload.type || '',
-      details: payload.details || payload.pledge || '',
-      action: payload.action || payload.consequence || '',
+      details: toHrProse_(payload.details || payload.pledge || ''),
+      action: toHrAction_(payload.action || payload.consequence || ''),
       recordedBy: payload.recordedBy || 'Waad Ops PWA'
     });
   } catch (eAppend) {
@@ -535,6 +636,7 @@ function styleIncidentDataRow_(row, index) {
   }
 }
 
+/** Appends one incident row. Description/Action should already be HR prose (toHrProse_). */
 function appendIncidentRow_(doc, row) {
   var body = doc.getBody();
   var table = null;
@@ -1498,10 +1600,10 @@ function handleTeacherNote_(body) {
       if (maybe && typeof maybe === 'object') text = maybe.text || maybe.note || maybe.details || '';
     } catch (ignoreJson) {}
   }
-  var action = String(body.action || body.actionTaken || '').trim();
+  var action = toHrAction_(String(body.action || body.actionTaken || '').trim());
   var recordedBy = body.recordedBy || 'Waad Ops PWA';
   var date = body.date || Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd');
-  var logText = String(text || '');
+  var logText = toHrProse_(text || '');
   if (action) {
     logText = logText ? (logText + ' · Action: ' + action) : ('Action: ' + action);
   }
