@@ -1,10 +1,10 @@
 /**
- * Waad Ops PWA → Drive upload relay (premium brand)
+ * Waad Ops PWA → Drive upload relay (light international-school brand)
  * Deploy as Web app: Execute as Me, Who has access: Anyone
  *
  * behavior-incident / behavior-incidents-batch:
  *   find/create "{StudentName} — {id}" under grade folder;
- *   find/create Doc "Long-Term Behavior Incident Report — {Name}" (international-school premium);
+ *   find/create Doc "Long-Term Behavior Incident Report — {Name}" (international-school light);
  *   append incident rows in concise professional school-admin / HR English
  *   (toHrProse_ — never paste WhatsApp/chat slang or raw user wording).
  *
@@ -13,7 +13,7 @@
  *   (#, Staff, Role, Status, Time, Notes + KPI summary).
  *
  * teacher-note / teacher-ratings / teacher-attendance-sync / teacher-scaffold:
- *   Staff HR Docs under 06_Teacher_HR (premium visual template).
+ *   Staff HR Docs under 06_Teacher_HR (light visual template).
  *   teacher-note text/action rewritten via toHrProse_ (professional HR English).
  *
  * upgrade-teacher-docs / upgradeExistingTeacherDocs_ — restyle Staff Performance Docs
@@ -39,8 +39,8 @@ var GRADE_FOLDERS = {
 };
 var TOKEN = 'r-M-LW1rIuLxESItwMg10v13SYr0P7aH';
 
-/** Owned copy in Waad Ops: Exam Header banner */
-var WAAD_HEADER_IMAGE_ID = '1r57zhJMc886XYtOvHP5zRTs5ynAggxh1';
+/** Light Doc header PNG (Moda export) in Waad Ops Drive */
+var WAAD_HEADER_IMAGE_ID = '10dfaSp-P0oAUyQKSEPQL1IZAavCwCwyG';
 /** Optional owned accent sticker (houses) */
 var WAAD_STICKER_IMAGE_ID = '1nw-JvYXBGqOT_LMNuIMNKG9LTED5PS8E';
 
@@ -50,6 +50,11 @@ var WAAD_MAGENTA = '#E4007E';
 var WAAD_ORANGE = '#EF7A06';
 var WAAD_NAVY_SOFT = '#E8EAF6';
 var WAAD_ROW_ALT = '#F5F7FA';
+var WAAD_PAGE_BG = '#F7F8FC';
+var WAAD_LINE = '#E6E8F0';
+var WAAD_HEADER_ROW = '#E8F7FC';  // pale cyan header (light theme)
+var WAAD_CHIP_BG_MAGENTA = '#FCE4F0';
+var WAAD_CHIP_BG_ORANGE = '#FFF0E0';
 var COLOR_PRESENT = '#C8E6C9';
 var COLOR_LATE = '#FFE082';
 var COLOR_ABSENT = '#FFCDD2';
@@ -518,13 +523,12 @@ function insertPremiumStudentDocHeader_(body, meta) {
     var blob = DriveApp.getFileById(WAAD_HEADER_IMAGE_ID).getBlob();
     var img = body.appendImage(blob);
     // Approximate full-bleed within page content width (~468–540 pt usable)
-    img.setWidth(540);
+    img.setWidth(520);
   } catch (eImg) {
     appendBrandColorBar_(body);
   }
 
   appendAccentRule_(body, WAAD_CYAN);
-  appendAccentRule_(body, WAAD_MAGENTA);
 
   var cover = body.appendParagraph('WAAD ACADEMY · Boys School');
   cover.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
@@ -542,7 +546,7 @@ function insertPremiumStudentDocHeader_(body, meta) {
 
   var sub = body.appendParagraph('Continuing academic-year behavior log · Academic Year 2026–2027');
   sub.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_MAGENTA)
+    .setForegroundColor('#5A607A')
     .setFontSize(10)
     .setSpacingAfter(8);
 
@@ -558,12 +562,12 @@ function insertPremiumStudentDocHeader_(body, meta) {
     ['Student Name', String(meta.studentName || ''), 'Grade', String(meta.grade || '')],
     ['WA ID', String(meta.studentId || ''), 'Section', String(meta.section || '')]
   ]);
-  info.setBorderColor(WAAD_NAVY);
+  info.setBorderColor(WAAD_LINE);
   info.setBorderWidth(0.5);
   for (var r = 0; r < info.getNumRows(); r++) {
     for (var c = 0; c < 4; c += 2) {
       var label = info.getCell(r, c);
-      label.setBackgroundColor(WAAD_NAVY_SOFT);
+      label.setBackgroundColor(WAAD_PAGE_BG);
       label.editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(10);
       info.getCell(r, c + 1).editAsText().setFontSize(10).setForegroundColor('#222222');
     }
@@ -578,22 +582,24 @@ function insertPremiumStudentDocHeader_(body, meta) {
   body.appendParagraph('');
   var incidHead = body.appendParagraph('Incident log');
   incidHead.setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(12);
-  appendAccentRule_(body, WAAD_ORANGE);
+  appendAccentRule_(body, WAAD_CYAN);
 }
 
 function appendBrandColorBar_(body) {
-  var bar = body.appendTable([['WAAD ACADEMY', '', '', '']]);
+  // Light fallback when header image missing: white strip + navy wordmark + thin cyan rule + small chips
+  var bar = body.appendTable([['WAAD ACADEMY', 'Boys School', 'OPS', 'AY 2026–27']]);
   bar.setBorderWidth(0);
   try {
-    bar.getCell(0, 0).setBackgroundColor(WAAD_NAVY);
-    bar.getCell(0, 1).setBackgroundColor(WAAD_CYAN);
-    bar.getCell(0, 2).setBackgroundColor(WAAD_MAGENTA);
-    bar.getCell(0, 3).setBackgroundColor(WAAD_ORANGE);
-    bar.getCell(0, 0).editAsText().setText('WAAD ACADEMY').setForegroundColor('#FFFFFF').setBold(true).setFontSize(14);
-    bar.getCell(0, 1).editAsText().setText(' ');
-    bar.getCell(0, 2).editAsText().setText(' ');
-    bar.getCell(0, 3).editAsText().setText(' ');
+    bar.getCell(0, 0).setBackgroundColor('#FFFFFF')
+      .editAsText().setText('WAAD ACADEMY').setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(14);
+    bar.getCell(0, 1).setBackgroundColor(WAAD_PAGE_BG)
+      .editAsText().setText('Boys School').setForegroundColor(WAAD_NAVY).setFontSize(10);
+    bar.getCell(0, 2).setBackgroundColor(WAAD_CHIP_BG_MAGENTA)
+      .editAsText().setText('OPS').setForegroundColor(WAAD_MAGENTA).setBold(true).setFontSize(9);
+    bar.getCell(0, 3).setBackgroundColor(WAAD_CHIP_BG_ORANGE)
+      .editAsText().setText('AY 2026–27').setForegroundColor(WAAD_ORANGE).setBold(true).setFontSize(9);
   } catch (eB) {}
+  appendAccentRule_(body, WAAD_CYAN);
 }
 
 function appendAccentRule_(body, color) {
@@ -610,7 +616,7 @@ function appendAccentRule_(body, color) {
 
 function appendConfidentialFooter_(body, line) {
   body.appendParagraph('');
-  appendAccentRule_(body, WAAD_NAVY);
+  appendAccentRule_(body, WAAD_CYAN);
   var p = body.appendParagraph('CONFIDENTIAL — ' + (line || 'Waad Academy Boys School · Ops use only'));
   p.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
     .setForegroundColor('#666666')
@@ -619,13 +625,13 @@ function appendConfidentialFooter_(body, line) {
 }
 
 function styleIncidentsTableHeader_(table) {
-  table.setBorderColor(WAAD_NAVY);
+  table.setBorderColor(WAAD_LINE);
   table.setBorderWidth(0.5);
   var row = table.getRow(0);
   for (var c = 0; c < row.getNumCells(); c++) {
     var cell = row.getCell(c);
-    cell.setBackgroundColor(WAAD_NAVY);
-    cell.editAsText().setForegroundColor('#FFFFFF').setBold(true).setFontSize(9);
+    cell.setBackgroundColor(WAAD_HEADER_ROW);
+    cell.editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(9);
   }
 }
 
@@ -650,6 +656,77 @@ function styleIncidentDataRow_(row, index) {
 }
 
 /** Appends one incident row. Description/Action should already be HR prose (toHrProse_). */
+
+/** Normalize text for dedupe comparison. */
+function dedupeKey_(parts) {
+  return parts.map(function (p) {
+    return String(p == null ? '' : p).toLowerCase().replace(/\s+/g, ' ').trim();
+  }).join('|');
+}
+
+/** True if incident/log table already has an identical date+description (+ optional type) row. */
+function tableHasDuplicateRow_(table, dateStr, typeStr, detailStr) {
+  if (!table) return false;
+  var target = dedupeKey_([dateStr, typeStr, detailStr]);
+  var rows = table.getNumRows();
+  for (var i = 1; i < rows; i++) {
+    try {
+      var d = table.getCell(i, 0).getText();
+      var t = table.getCell(i, 1).getText();
+      var n = table.getCell(i, 2).getText();
+      if (dedupeKey_([d, t, n]) === target) return true;
+    } catch (e) {}
+  }
+  return false;
+}
+
+/** Drop identical consecutive/any duplicate log rows (date|type|note). Returns unique list. */
+function dedupeLogRows_(rows) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < (rows || []).length; i++) {
+    var r = rows[i];
+    var key = dedupeKey_([r.date, r.type || r.category, r.note || r.details || r.text]);
+    if (!key || key === '||') continue;
+    if (seen[key]) continue;
+    seen[key] = 1;
+    out.push(r);
+  }
+  return out;
+}
+
+/** Strip section bullets that merely repeat a chronological log note. */
+function filterBulletsAgainstLog_(bullets, logRows) {
+  var logKeys = {};
+  for (var i = 0; i < (logRows || []).length; i++) {
+    var r = logRows[i];
+    var note = String(r.note || r.details || r.text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (note) logKeys[note] = 1;
+    // also key without leading bullet/date wrappers
+    var stripped = note.replace(/^[•\-\*]\s*/, '').replace(/^\[\d{4}-\d{2}-\d{2}\]\s*/, '').trim();
+    if (stripped) logKeys[stripped] = 1;
+  }
+  var out = [];
+  for (var j = 0; j < (bullets || []).length; j++) {
+    var b = String(bullets[j] || '');
+    var bt = b.toLowerCase().replace(/\s+/g, ' ').trim()
+      .replace(/^[•\-\*]\s*/, '')
+      .replace(/^\[\d{4}-\d{2}-\d{2}\]\s*/, '')
+      .trim();
+    if (!bt || bt === '—' || bt === '-') continue;
+    if (logKeys[bt]) continue;
+    // skip if bullet is contained in a log note or vice versa (near-duplicate)
+    var dup = false;
+    for (var k in logKeys) {
+      if (!logKeys.hasOwnProperty(k)) continue;
+      if (k.length > 12 && (bt.indexOf(k) >= 0 || k.indexOf(bt) >= 0)) { dup = true; break; }
+    }
+    if (dup) continue;
+    out.push(b);
+  }
+  return out;
+}
+
 function appendIncidentRow_(doc, row) {
   var body = doc.getBody();
   var table = null;
@@ -679,6 +756,10 @@ function appendIncidentRow_(doc, row) {
     );
     doc.saveAndClose();
     return;
+  }
+  if (tableHasDuplicateRow_(table, row.date, row.category, row.details)) {
+    doc.saveAndClose();
+    return { deduped: true };
   }
   var r = table.appendTableRow();
   r.appendTableCell(String(row.date || ''));
@@ -752,7 +833,7 @@ function collectStudentReportDocs_(grades) {
 }
 
 /**
- * Restyle existing student behavior Docs to premium brand.
+ * Restyle existing student behavior Docs to light international-school brand.
  * Pass array of Document IDs or {docId, studentName, studentId, grade, section}.
  * Preserves incident history from the Date-header table.
  */
@@ -916,24 +997,24 @@ function formatAttendanceSheet_(ss, date, rows) {
   } catch (e0) {}
 
   // Row 1: brand stripe (4 color segments via cells) + merged title feel
-  sh.getRange(1, 1).setBackground(WAAD_NAVY);
-  sh.getRange(1, 2).setBackground(WAAD_CYAN);
+  sh.getRange(1, 1).setBackground(WAAD_CYAN);
+  sh.getRange(1, 2).setBackground(WAAD_PAGE_BG);
   sh.getRange(1, 3, 1, 4).merge()
     .setValue('WAAD ACADEMY')
-    .setBackground(WAAD_NAVY)
-    .setFontColor('#FFFFFF')
+    .setBackground('#FFFFFF')
+    .setFontColor(WAAD_NAVY)
     .setFontWeight('bold')
     .setFontSize(20)
     .setHorizontalAlignment('center')
     .setVerticalAlignment('middle');
-  sh.getRange(1, 5).setBackground(WAAD_MAGENTA);
-  sh.getRange(1, 6).setBackground(WAAD_ORANGE);
+  sh.getRange(1, 5).setBackground(WAAD_CHIP_BG_MAGENTA);
+  sh.getRange(1, 6).setBackground(WAAD_CHIP_BG_ORANGE);
   sh.setRowHeight(1, 42);
 
   // Row 2: title
   sh.getRange(2, 1, 1, 6).merge()
     .setValue('Assembly Attendance Register')
-    .setBackground(WAAD_CYAN)
+    .setBackground(WAAD_PAGE_BG)
     .setFontColor(WAAD_NAVY)
     .setFontWeight('bold')
     .setFontSize(14)
@@ -974,14 +1055,14 @@ function formatAttendanceSheet_(ss, date, rows) {
     .setFontWeight('bold')
     .setFontSize(10)
     .setHorizontalAlignment('center')
-    .setBorder(true, true, true, true, false, false, WAAD_NAVY, SpreadsheetApp.BorderStyle.SOLID);
+    .setBorder(true, true, true, true, false, false, WAAD_LINE, SpreadsheetApp.BorderStyle.SOLID);
   sh.setRowHeight(4, 26);
 
   // Row 5: headers
   var headers = ['#', 'Staff', 'Role', 'Status', 'Time', 'Notes'];
   sh.getRange(5, 1, 1, 6).setValues([headers])
-    .setBackground(WAAD_NAVY)
-    .setFontColor('#FFFFFF')
+    .setBackground(WAAD_HEADER_ROW)
+    .setFontColor(WAAD_NAVY)
     .setFontWeight('bold')
     .setFontSize(10)
     .setHorizontalAlignment('center')
@@ -1281,13 +1362,12 @@ function buildTeacherReportBody_(body, meta, scores) {
 
   try {
     var blob = DriveApp.getFileById(WAAD_HEADER_IMAGE_ID).getBlob();
-    body.appendImage(blob).setWidth(540);
+    body.appendImage(blob).setWidth(520);
   } catch (eImg) {
     appendBrandColorBar_(body);
   }
 
   appendAccentRule_(body, WAAD_CYAN);
-  appendAccentRule_(body, WAAD_MAGENTA);
 
   body.appendParagraph('WAAD ACADEMY · Staff Professional Record')
     .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
@@ -1303,7 +1383,7 @@ function buildTeacherReportBody_(body, meta, scores) {
 
   body.appendParagraph(String(meta.name || ''))
     .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_MAGENTA)
+    .setForegroundColor(WAAD_NAVY)
     .setBold(true)
     .setFontSize(14);
 
@@ -1312,7 +1392,7 @@ function buildTeacherReportBody_(body, meta, scores) {
     .setForegroundColor(WAAD_NAVY)
     .setFontSize(9);
 
-  appendAccentRule_(body, WAAD_ORANGE);
+  appendAccentRule_(body, WAAD_CYAN);
 
   // Profile
   sectionHeading_(body, '1. Profile', WAAD_CYAN);
@@ -1388,28 +1468,28 @@ function fmtRate_(v) {
 
 function sectionHeading_(body, text, accent) {
   body.appendParagraph('');
-  // Colored accent bar + title as a 2-cell table for stronger visuals
   var bar = body.appendTable([[' ', text]]);
   bar.setBorderWidth(0);
   try {
-    bar.setColumnWidth(0, 10);
-    bar.setColumnWidth(1, 480);
+    bar.setColumnWidth(0, 6);
+    bar.setColumnWidth(1, 484);
   } catch (eW) {}
   bar.getCell(0, 0).setBackgroundColor(accent || WAAD_CYAN);
-  bar.getCell(0, 1).setBackgroundColor(WAAD_NAVY_SOFT)
+  bar.getCell(0, 1).setBackgroundColor(WAAD_PAGE_BG)
     .editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(12);
   appendAccentRule_(body, accent || WAAD_CYAN);
 }
 
 function styleMetaTable_(table) {
-  table.setBorderColor(WAAD_NAVY);
+  table.setBorderColor(WAAD_LINE);
   table.setBorderWidth(0.5);
   for (var r = 0; r < table.getNumRows(); r++) {
     for (var c = 0; c < table.getRow(r).getNumCells(); c += 2) {
-      table.getCell(r, c).setBackgroundColor(WAAD_NAVY_SOFT)
+      table.getCell(r, c).setBackgroundColor(WAAD_PAGE_BG)
         .editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(10);
       if (c + 1 < table.getRow(r).getNumCells()) {
-        table.getCell(r, c + 1).editAsText().setFontSize(10);
+        table.getCell(r, c + 1).setBackgroundColor('#FFFFFF')
+          .editAsText().setFontSize(10).setForegroundColor('#222222');
       }
     }
   }
@@ -1424,21 +1504,20 @@ function appendRatingBar_(body, label, score) {
   for (var i = 1; i <= 5; i++) cells.push(String(i));
   var t = body.appendTable([cells]);
   t.setBorderWidth(0.5);
-  t.setBorderColor(WAAD_NAVY);
+  t.setBorderColor(WAAD_LINE);
   for (var c = 0; c < 5; c++) {
     var cell = t.getCell(0, c);
     if (c < s) {
-      cell.setBackgroundColor(c === s - 1 ? WAAD_CYAN : WAAD_NAVY);
-      cell.editAsText().setForegroundColor('#FFFFFF').setBold(true).setFontSize(11);
+      cell.setBackgroundColor(c === s - 1 ? WAAD_CYAN : WAAD_HEADER_ROW);
+      cell.editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(11);
     } else {
-      cell.setBackgroundColor('#ECEFF5');
+      cell.setBackgroundColor('#FFFFFF');
       cell.editAsText().setForegroundColor('#9AA0B8').setFontSize(11);
     }
     try { t.setColumnWidth(c, 48); } catch (e) {}
   }
 }
 
-/** Big Present / Late / Absent KPI tiles. */
 function appendAttendanceKpiRow_(body, scores) {
   var p = fmtRate_(scores.presentRate);
   var l = fmtRate_(scores.lateRate);
@@ -1453,11 +1532,12 @@ function appendAttendanceKpiRow_(body, scores) {
     t.setColumnWidth(1, 160);
     t.setColumnWidth(2, 160);
   } catch (eK) {}
-  var colors = [WAAD_NAVY, WAAD_CYAN, WAAD_MAGENTA];
+  var colors = [WAAD_HEADER_ROW, '#E0F7FA', WAAD_CHIP_BG_MAGENTA];
+  var fg = [WAAD_NAVY, WAAD_NAVY, WAAD_MAGENTA];
   for (var c = 0; c < 3; c++) {
     t.getCell(0, c).setBackgroundColor(colors[c])
-      .editAsText().setForegroundColor('#FFFFFF').setBold(true).setFontSize(9);
-    t.getCell(1, c).setBackgroundColor(c === 0 ? WAAD_NAVY_SOFT : (c === 1 ? '#E0F7FA' : '#FCE4EC'))
+      .editAsText().setForegroundColor(fg[c]).setBold(true).setFontSize(9);
+    t.getCell(1, c).setBackgroundColor('#FFFFFF')
       .editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(16);
   }
 }
@@ -1469,9 +1549,9 @@ function appendAttendanceMixBar_(body, scores) {
   if (isNaN(p) && isNaN(l) && isNaN(a)) {
     var placeholder = body.appendTable([['P', 'L', 'A', ' ', ' ', ' ', ' ', ' ', ' ', ' ']]);
     placeholder.setBorderWidth(0);
-    placeholder.getCell(0, 0).setBackgroundColor(WAAD_NAVY).editAsText().setForegroundColor('#FFFFFF').setFontSize(7);
-    placeholder.getCell(0, 1).setBackgroundColor(WAAD_CYAN).editAsText().setForegroundColor('#FFFFFF').setFontSize(7);
-    placeholder.getCell(0, 2).setBackgroundColor(WAAD_MAGENTA).editAsText().setForegroundColor('#FFFFFF').setFontSize(7);
+    placeholder.getCell(0, 0).setBackgroundColor(WAAD_HEADER_ROW).editAsText().setForegroundColor(WAAD_NAVY).setFontSize(7);
+    placeholder.getCell(0, 1).setBackgroundColor('#E0F7FA').editAsText().setForegroundColor(WAAD_NAVY).setFontSize(7);
+    placeholder.getCell(0, 2).setBackgroundColor(WAAD_CHIP_BG_MAGENTA).editAsText().setForegroundColor(WAAD_MAGENTA).setFontSize(7);
     for (var z = 3; z < 10; z++) {
       placeholder.getCell(0, z).setBackgroundColor('#EEEEEE');
       try { placeholder.setColumnWidth(z, 28); } catch (ez) {}
@@ -1500,11 +1580,11 @@ function appendAttendanceMixBar_(body, scores) {
   for (var c = 0; c < cells.length; c++) {
     var cell = t.getCell(0, c);
     var kind = labels[c];
-    if (kind === 'present') cell.setBackgroundColor(WAAD_NAVY);
-    else if (kind === 'late') cell.setBackgroundColor(WAAD_CYAN);
-    else if (kind === 'absent') cell.setBackgroundColor(WAAD_MAGENTA);
+    if (kind === 'present') cell.setBackgroundColor('#81D4FA');
+    else if (kind === 'late') cell.setBackgroundColor('#81D4FA');
+    else if (kind === 'absent') cell.setBackgroundColor('#F48FB1');
     else cell.setBackgroundColor('#EEEEEE');
-    cell.editAsText().setForegroundColor(cell.getBackgroundColor() === '#EEEEEE' ? '#999999' : '#FFFFFF').setFontSize(6);
+    cell.editAsText().setForegroundColor(WAAD_NAVY).setFontSize(6);
     try { t.setColumnWidth(c, 28); } catch (e2) {}
   }
 }
@@ -1642,13 +1722,13 @@ function handleTeacherNote_(body) {
           var p2 = ch2.asParagraph();
           var t2 = String(p2.getText()).trim();
           if (t2 === '—' || t2 === '-') {
-            p2.setText('• [' + date + '] ' + logText);
+            p2.setText('• [' + date + '] See chronological log');
             p2.setForegroundColor('#222222');
             inserted = true;
             break;
           }
           if (t2.indexOf('•') === 0 || t2.length > 1) {
-            bodyEl.insertParagraph(j + 1, '• [' + date + '] ' + logText)
+            bodyEl.insertParagraph(j + 1, '• [' + date + '] See chronological log')
               .setForegroundColor('#222222');
             inserted = true;
             break;
@@ -1660,13 +1740,18 @@ function handleTeacherNote_(body) {
 
   // Always append to chronological log table
   var logTable = findLogTable_(bodyEl);
+  var logDeduped = false;
   if (logTable) {
-    var r = logTable.appendTableRow();
-    r.appendTableCell(date);
-    r.appendTableCell(noteType);
-    r.appendTableCell(String(logText));
-    r.appendTableCell(recordedBy);
-    styleIncidentDataRow_(r, logTable.getNumRows() - 1);
+    if (tableHasDuplicateRow_(logTable, date, noteType, logText)) {
+      logDeduped = true;
+    } else {
+      var r = logTable.appendTableRow();
+      r.appendTableCell(date);
+      r.appendTableCell(noteType);
+      r.appendTableCell(String(logText));
+      r.appendTableCell(recordedBy);
+      styleIncidentDataRow_(r, logTable.getNumRows() - 1);
+    }
   } else if (!inserted) {
     bodyEl.appendParagraph('[' + date + '] ' + noteType + ': ' + logText + ' (' + recordedBy + ')');
   }
@@ -1831,11 +1916,21 @@ function extractTeacherNotesAndLog_(body) {
 
 function restoreTeacherNotesAndLog_(body, preserved) {
   if (!preserved) return;
+  // Chronological log is the single source of truth — dedupe identical rows first.
+  var logRows = dedupeLogRows_((preserved.log || []).map(function (cells) {
+    return {
+      date: cells[0],
+      type: cells[1],
+      note: cells[2],
+      recordedBy: cells[3],
+      _cells: cells
+    };
+  }));
   var map = [
-    ['6. Achievements', preserved.achievements],
-    ['7. Initiatives', preserved.initiatives],
-    ['8. Complaints', preserved.complaints],
-    ['9. Issues', preserved.issues]
+    ['6. Achievements', filterBulletsAgainstLog_(preserved.achievements, logRows)],
+    ['7. Initiatives', filterBulletsAgainstLog_(preserved.initiatives, logRows)],
+    ['8. Complaints', filterBulletsAgainstLog_(preserved.complaints, logRows)],
+    ['9. Issues', filterBulletsAgainstLog_(preserved.issues, logRows)]
   ];
   for (var m = 0; m < map.length; m++) {
     var heading = map[m][0];
@@ -1858,11 +1953,13 @@ function restoreTeacherNotesAndLog_(body, preserved) {
     }
   }
   var log = findLogTable_(body);
-  if (log && preserved.log && preserved.log.length) {
-    for (var r = 0; r < preserved.log.length; r++) {
+  if (log && logRows.length) {
+    for (var r = 0; r < logRows.length; r++) {
+      var cells = logRows[r]._cells || [logRows[r].date, logRows[r].type, logRows[r].note, logRows[r].recordedBy];
+      if (tableHasDuplicateRow_(log, cells[0], cells[1], cells[2])) continue;
       var row = log.appendTableRow();
-      for (var c = 0; c < 4; c++) row.appendTableCell(String(preserved.log[r][c] || ''));
-      styleIncidentDataRow_(row, r + 1);
+      for (var c = 0; c < 4; c++) row.appendTableCell(String(cells[c] || ''));
+      styleIncidentDataRow_(row, log.getNumRows() - 1);
     }
   }
 }
@@ -2082,7 +2179,7 @@ function collectTeacherReportDocs_(onlyNames) {
 }
 
 /**
- * Restyle existing Staff Performance Docs to the premium visual template.
+ * Restyle existing Staff Performance Docs to the light visual template.
  * Preserves chronological log rows + section bullet notes + ratings/attendance when scrapeable.
  */
 function upgradeExistingTeacherDocs_(items) {
@@ -2570,7 +2667,7 @@ function writeHealthSnapshotDoc_(student, rec) {
   h.setHeading(DocumentApp.ParagraphHeading.HEADING1);
   h.setForegroundColor(WAAD_NAVY);
   body.appendParagraph('Waad Academy · Boys School · Confidential operational use')
-    .setForegroundColor(WAAD_MAGENTA).setFontSize(9);
+    .setForegroundColor('#5A607A').setFontSize(9);
   appendAccentRule_(body, WAAD_ORANGE);
 
   var info = body.appendTable([
@@ -2627,15 +2724,17 @@ function writeHealthSnapshotDoc_(student, rec) {
 }
 
 function styleInfoTable_(table) {
-  table.setBorderWidth(0);
+  table.setBorderColor(WAAD_LINE);
+  table.setBorderWidth(0.5);
   for (var r = 0; r < table.getNumRows(); r++) {
     for (var c = 0; c < table.getRow(r).getNumCells(); c++) {
       var cell = table.getCell(r, c);
       if (c % 2 === 0) {
-        cell.setBackgroundColor(WAAD_NAVY);
-        cell.editAsText().setForegroundColor('#FFFFFF').setBold(true);
+        cell.setBackgroundColor(WAAD_PAGE_BG);
+        cell.editAsText().setForegroundColor(WAAD_NAVY).setBold(true);
       } else {
-        cell.setBackgroundColor(WAAD_ROW_ALT);
+        cell.setBackgroundColor('#FFFFFF');
+        cell.editAsText().setForegroundColor('#222222');
       }
     }
   }
@@ -2644,14 +2743,13 @@ function styleInfoTable_(table) {
 function styleIncidentTableHeaderLike_(table) {
   var header = table.getRow(0);
   for (var c = 0; c < header.getNumCells(); c++) {
-    header.getCell(c).setBackgroundColor(WAAD_NAVY);
-    header.getCell(c).editAsText().setForegroundColor('#FFFFFF').setBold(true);
+    header.getCell(c).setBackgroundColor(WAAD_HEADER_ROW);
+    header.getCell(c).editAsText().setForegroundColor(WAAD_NAVY).setBold(true);
   }
+  table.setBorderColor(WAAD_LINE);
   for (var r = 1; r < table.getNumRows(); r++) {
-    if (r % 2 === 0) {
-      for (var c2 = 0; c2 < table.getRow(r).getNumCells(); c2++) {
-        table.getCell(r, c2).setBackgroundColor(WAAD_ROW_ALT);
-      }
+    for (var c2 = 0; c2 < table.getRow(r).getNumCells(); c2++) {
+      table.getCell(r, c2).setBackgroundColor(r % 2 === 0 ? WAAD_ROW_ALT : '#FFFFFF');
     }
   }
 }
