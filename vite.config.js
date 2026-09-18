@@ -42,7 +42,7 @@ export default defineConfig({
         short_name: 'Waad Ops',
         description: 'Waad Academy operations — assembly attendance & behavior tracker',
         theme_color: '#2A3077',
-        background_color: '#2A3077',
+        background_color: '#F7F8FC',
         display: 'standalone',
         orientation: 'portrait-primary',
         start_url: '/waad-ops-pwa/',
