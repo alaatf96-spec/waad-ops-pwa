@@ -22,7 +22,7 @@ URL='https://script.google.com/macros/s/AKfycbzYopYxUwQScYVE3fODZ4oHQ3xfoc9hTr0y
 
 # Yahya student Doc
 curl -sS -X POST "$URL" -H 'Content-Type: application/json' \
-  -d '{"token":"'"$TOKEN"'","kind":"upgrade-student-docs","docIds":["1KQAw15VwByqiIX9gd9-BZmtJvri-Li1NmjHvPBofHOs"]}'
+  -d '{"token":"'"$TOKEN"'","kind":"upgrade-student-docs","docIds":["1iwjKp4WEsXMU0hpjupw6c1EFsTDhxYgtVy6nEiz88_M"]}'
 
 # Nihma teacher Doc
 curl -sS -X POST "$URL" -H 'Content-Type: application/json' \
@@ -49,3 +49,14 @@ If a new light header PNG was uploaded to Drive, set `WAAD_HEADER_IMAGE_ID` in `
 
 - Brand kit: see agent report (`bk_…` Waad Academy)
 - Light Doc header share + cover share: see agent report
+
+
+## Header image (already uploaded)
+
+Drive file id (set in `WaadOpsUpload.gs` as `WAAD_HEADER_IMAGE_ID`):
+
+`10dfaSp-P0oAUyQKSEPQL1IZAavCwCwyG`
+
+https://drive.google.com/file/d/10dfaSp-P0oAUyQKSEPQL1IZAavCwCwyG/view
+
+After pasting the new `.gs` and redeploying, re-run the sample upgrade curls above so Yahya/Nihma Docs pick up the light theme + log dedupe.
