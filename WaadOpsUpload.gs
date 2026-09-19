@@ -1,10 +1,10 @@
 /**
- * Waad Ops PWA → Drive upload relay (light international-school brand)
+ * Waad Ops PWA → Drive upload relay (executive HR visual system)
  * Deploy as Web app: Execute as Me, Who has access: Anyone
  *
  * behavior-incident / behavior-incidents-batch:
  *   find/create "{StudentName} — {id}" under grade folder;
- *   find/create Doc "Long-Term Behavior Incident Report — {Name}" (international-school light);
+ *   find/create Doc "Long-Term Behavior Incident Report — {Name}" (executive HR Student Behavior File);
  *   append incident rows in concise professional school-admin / HR English
  *   (toHrProse_ — never paste WhatsApp/chat slang or raw user wording).
  *
@@ -13,7 +13,7 @@
  *   (#, Staff, Role, Status, Time, Notes + KPI summary).
  *
  * teacher-note / teacher-ratings / teacher-attendance-sync / teacher-scaffold:
- *   Staff HR Docs under 06_Teacher_HR (light visual template).
+ *   Staff HR Docs under 06_Teacher_HR (executive HR Staff Performance File).
  *   teacher-note text/action rewritten via toHrProse_ (professional HR English).
  *
  * upgrade-teacher-docs / upgradeExistingTeacherDocs_ — restyle Staff Performance Docs
@@ -39,10 +39,12 @@ var GRADE_FOLDERS = {
 };
 var TOKEN = 'r-M-LW1rIuLxESItwMg10v13SYr0P7aH';
 
-/** Light Doc header PNG (Moda export) in Waad Ops Drive */
-var WAAD_HEADER_IMAGE_ID = '10dfaSp-P0oAUyQKSEPQL1IZAavCwCwyG';
+/** Executive HR Doc header PNGs (Moda export) in Waad Ops Drive */
+var WAAD_HEADER_IMAGE_ID = '136Ts-gH7RdjygWL2Ee-eyTVPqb-4izEC'; // Student Behavior File
+var WAAD_TEACHER_HEADER_IMAGE_ID = '16dDAL7NzH1MyZj6pOFxwXzRJbdgeFyGO'; // Staff Performance File
 /** Optional owned accent sticker (houses) */
 var WAAD_STICKER_IMAGE_ID = '1nw-JvYXBGqOT_LMNuIMNKG9LTED5PS8E';
+var WAAD_HEADER_SOFT = '#EEF0F6'; // alternate pale table header
 
 var WAAD_NAVY = '#2A3077';
 var WAAD_CYAN = '#1FC2F2';
@@ -58,6 +60,90 @@ var WAAD_CHIP_BG_ORANGE = '#FFF0E0';
 var COLOR_PRESENT = '#C8E6C9';
 var COLOR_LATE = '#FFE082';
 var COLOR_ABSENT = '#FFCDD2';
+
+/** Insert branded executive header image; fall back to light brand bar. kind: student|teacher|health */
+function insertBrandedHeaderImage_(body, kind) {
+  var id = WAAD_HEADER_IMAGE_ID;
+  if (kind === 'teacher') id = WAAD_TEACHER_HEADER_IMAGE_ID || WAAD_HEADER_IMAGE_ID;
+  try {
+    var blob = DriveApp.getFileById(id).getBlob();
+    body.appendImage(blob).setWidth(520);
+    return true;
+  } catch (eImg) {
+    appendBrandColorBar_(body);
+    return false;
+  }
+}
+
+/** Single-row profile meta chips (label above value look via 2-row table). */
+function appendProfileMetaStrip_(body, cells) {
+  // cells: [{label, value}, ...] up to 4
+  var labels = [];
+  var values = [];
+  for (var i = 0; i < cells.length; i++) {
+    labels.push(String(cells[i].label || ''));
+    values.push(String(cells[i].value == null ? '—' : cells[i].value));
+  }
+  var t = body.appendTable([labels, values]);
+  t.setBorderColor(WAAD_LINE);
+  t.setBorderWidth(0.5);
+  var colW = Math.floor(500 / Math.max(1, cells.length));
+  for (var c = 0; c < cells.length; c++) {
+    t.getCell(0, c).setBackgroundColor(WAAD_HEADER_SOFT)
+      .editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(8);
+    t.getCell(1, c).setBackgroundColor('#FFFFFF')
+      .editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(11);
+    try { t.setColumnWidth(c, colW); } catch (eW) {}
+  }
+}
+
+/** KPI metric strip — 3–4 cells (label row + value row). */
+function appendKpiStrip_(body, cells) {
+  var labels = [];
+  var values = [];
+  for (var i = 0; i < cells.length; i++) {
+    labels.push(String(cells[i].label || ''));
+    values.push(String(cells[i].value == null ? '—' : cells[i].value));
+  }
+  var t = body.appendTable([labels, values]);
+  t.setBorderWidth(0);
+  var colW = Math.floor(500 / Math.max(1, cells.length));
+  var soft = [WAAD_HEADER_ROW, WAAD_HEADER_SOFT, WAAD_CHIP_BG_ORANGE, WAAD_CHIP_BG_MAGENTA];
+  var fg = [WAAD_NAVY, WAAD_NAVY, WAAD_ORANGE, WAAD_MAGENTA];
+  for (var c = 0; c < cells.length; c++) {
+    var bi = c % soft.length;
+    t.getCell(0, c).setBackgroundColor(soft[bi])
+      .editAsText().setForegroundColor(fg[bi]).setBold(true).setFontSize(8);
+    t.getCell(1, c).setBackgroundColor('#FFFFFF')
+      .editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(14);
+    try { t.setColumnWidth(c, colW); } catch (eK) {}
+  }
+}
+
+/** Doc-type label + person name + campus line (executive cover hierarchy). */
+function appendExecutiveCoverTitle_(body, docTypeLabel, personName, subtitle) {
+  body.appendParagraph(String(docTypeLabel || ''))
+    .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+    .setForegroundColor(WAAD_CYAN)
+    .setBold(true)
+    .setFontSize(10)
+    .setSpacingAfter(2)
+    .setSpacingBefore(6);
+  body.appendParagraph(String(personName || ''))
+    .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+    .setForegroundColor(WAAD_NAVY)
+    .setBold(true)
+    .setFontSize(20)
+    .setSpacingAfter(2);
+  if (subtitle) {
+    body.appendParagraph(String(subtitle))
+      .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
+      .setForegroundColor('#5A607A')
+      .setFontSize(9)
+      .setSpacingAfter(8);
+  }
+}
+
 
 /** Mirrors src/data/roster.js TEACHER_ROSTER */
 var TEACHER_ROSTER = [
@@ -490,7 +576,7 @@ function findOrCreateReportDoc_(folder, title, meta) {
 
   var body = doc.getBody();
   body.clear();
-  insertPremiumStudentDocHeader_(body, meta);
+  insertPremiumStudentDocHeader_(body, meta, { total: 0, lastDate: '—' });
   var incidents = body.appendTable([
     ['Date', 'Incident type', 'Description', 'Action taken', 'Recorded by']
   ]);
@@ -510,8 +596,8 @@ function findOrCreateReportDoc_(folder, title, meta) {
   return { doc: DocumentApp.openById(doc.getId()), created: true };
 }
 
-/** Full-bleed banner + international-school cover + two-column meta (no ages). */
-function insertPremiumStudentDocHeader_(body, meta) {
+/** Executive HR cover: header image → doc type → name → meta row → KPI strip → Chronological Log heading. No ages. */
+function insertPremiumStudentDocHeader_(body, meta, kpi) {
   try {
     body.setMarginTop(36);
     body.setMarginBottom(48);
@@ -519,71 +605,42 @@ function insertPremiumStudentDocHeader_(body, meta) {
     body.setMarginRight(54);
   } catch (eM) {}
 
-  try {
-    var blob = DriveApp.getFileById(WAAD_HEADER_IMAGE_ID).getBlob();
-    var img = body.appendImage(blob);
-    // Approximate full-bleed within page content width (~468–540 pt usable)
-    img.setWidth(520);
-  } catch (eImg) {
-    appendBrandColorBar_(body);
-  }
-
+  insertBrandedHeaderImage_(body, 'student');
   appendAccentRule_(body, WAAD_CYAN);
 
-  var cover = body.appendParagraph('WAAD ACADEMY · Boys School');
-  cover.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_NAVY)
-    .setBold(true)
-    .setFontSize(11)
-    .setSpacingAfter(2);
+  appendExecutiveCoverTitle_(
+    body,
+    'STUDENT BEHAVIOR FILE',
+    String(meta.studentName || ''),
+    'Waad Academy · Boys School · Academic Year 2026–2027 · Confidential'
+  );
 
-  var title = body.appendParagraph('Long-Term Behavior Incident Report');
-  title.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_NAVY)
-    .setBold(true)
-    .setFontSize(18)
-    .setSpacingAfter(2);
-
-  var sub = body.appendParagraph('Continuing academic-year behavior log · Academic Year 2026–2027');
-  sub.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor('#5A607A')
-    .setFontSize(10)
-    .setSpacingAfter(8);
-
-  var moe = body.appendParagraph('Kingdom of Saudi Arabia — Ministry of Education');
-  moe.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_NAVY)
-    .setFontSize(9);
-
-  appendAccentRule_(body, WAAD_CYAN);
-
-  // Two-column meta table: Name|value | Grade|value ; WA ID|value | Section|value
-  var info = body.appendTable([
-    ['Student Name', String(meta.studentName || ''), 'Grade', String(meta.grade || '')],
-    ['WA ID', String(meta.studentId || ''), 'Section', String(meta.section || '')]
+  appendProfileMetaStrip_(body, [
+    { label: 'WA ID', value: meta.studentId || '—' },
+    { label: 'Grade', value: meta.grade || '—' },
+    { label: 'Section', value: meta.section || '—' },
+    { label: 'Campus', value: 'Boys · Jeddah' }
   ]);
-  info.setBorderColor(WAAD_LINE);
-  info.setBorderWidth(0.5);
-  for (var r = 0; r < info.getNumRows(); r++) {
-    for (var c = 0; c < 4; c += 2) {
-      var label = info.getCell(r, c);
-      label.setBackgroundColor(WAAD_PAGE_BG);
-      label.editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(10);
-      info.getCell(r, c + 1).editAsText().setFontSize(10).setForegroundColor('#222222');
-    }
-  }
-  try {
-    info.setColumnWidth(0, 95);
-    info.setColumnWidth(1, 175);
-    info.setColumnWidth(2, 70);
-    info.setColumnWidth(3, 120);
-  } catch (eW) {}
+
+  body.appendParagraph('').setSpacingAfter(2);
+
+  var total = (kpi && kpi.total != null) ? kpi.total : 0;
+  var last = (kpi && kpi.lastDate) ? kpi.lastDate : '—';
+  appendKpiStrip_(body, [
+    { label: 'LOG ENTRIES', value: String(total) },
+    { label: 'LAST RECORDED', value: String(last) },
+    { label: 'ACADEMIC YEAR', value: '2026–27' },
+    { label: 'STATUS', value: 'Active' }
+  ]);
 
   body.appendParagraph('');
-  var incidHead = body.appendParagraph('Incident log');
-  incidHead.setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(12);
+  var incidHead = body.appendParagraph('Chronological Log');
+  incidHead.setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(12).setSpacingAfter(2);
+  body.appendParagraph('Single source of truth for behavior incidents · HR English only')
+    .setFontSize(8).setForegroundColor('#71757D').setSpacingAfter(4);
   appendAccentRule_(body, WAAD_CYAN);
 }
+
 
 function appendBrandColorBar_(body) {
   // Light fallback when header image missing: white strip + navy wordmark + thin cyan rule + small chips
@@ -774,7 +831,7 @@ function appendIncidentRow_(doc, row) {
 /**
  * Webhook: upgrade-student-docs
  * Discovers Long-Term Behavior Docs under G4/G5/G6 (or uses body.items / docIds).
- * Preserves incident table rows; rebuilds premium cover/header only.
+ * Preserves incident table rows (deduped); rebuilds executive HR cover + KPI strip.
  * Optional body.offset / body.limit for batching (Apps Script time limits).
  */
 function handleUpgradeStudentDocs_(body) {
@@ -833,7 +890,7 @@ function collectStudentReportDocs_(grades) {
 }
 
 /**
- * Restyle existing student behavior Docs to light international-school brand.
+ * Restyle existing student behavior Docs to executive HR Student Behavior File.
  * Pass array of Document IDs or {docId, studentName, studentId, grade, section}.
  * Preserves incident history from the Date-header table.
  */
@@ -856,14 +913,20 @@ function upgradeExistingStudentDocs_(items) {
       var body = doc.getBody();
       // Preserve incident rows: extract from first Date-header table
       var rows = extractIncidentRows_(body);
+      // Dedupe identical log rows (date|type|description)
+      var deduped = dedupeLogRows_(rows.map(function (cells) {
+        return { date: cells[0], type: cells[1], note: cells[2], _cells: cells };
+      }));
+      rows = deduped.map(function (r) { return r._cells || [r.date, r.type, r.note, '', '']; });
       var meta = {
         studentName: (item && item.studentName) || guessMetaFromTitle_(doc.getName(), 'name'),
         studentId: (item && (item.studentId || item.waadId)) || '',
         grade: (item && item.grade) || '',
         section: (item && (item.section || item.color)) || ''
       };
+      var lastDate = rows.length ? String(rows[rows.length - 1][0] || '') : '—';
       body.clear();
-      insertPremiumStudentDocHeader_(body, meta);
+      insertPremiumStudentDocHeader_(body, meta, { total: rows.length, lastDate: lastDate || '—' });
       var incidents = body.appendTable([
         ['Date', 'Incident type', 'Description', 'Action taken', 'Recorded by']
       ]);
@@ -997,8 +1060,8 @@ function formatAttendanceSheet_(ss, date, rows) {
   } catch (e0) {}
 
   // Row 1: brand stripe (4 color segments via cells) + merged title feel
-  sh.getRange(1, 1).setBackground(WAAD_CYAN);
-  sh.getRange(1, 2).setBackground(WAAD_PAGE_BG);
+  sh.getRange(1, 1).setBackground(WAAD_CYAN); // thin accent cell
+  sh.getRange(1, 2, 1, 4).setBackground(WAAD_PAGE_BG);
   sh.getRange(1, 3, 1, 4).merge()
     .setValue('WAAD ACADEMY')
     .setBackground('#FFFFFF')
@@ -1350,7 +1413,7 @@ function isTeacherDocStub_(body) {
   }
 }
 
-/** HR adult professional Doc (different from student behavioral). */
+/** Executive HR Staff Performance File — cover → meta → KPI → ratings chips → short pointers → Chronological Log SoT. */
 function buildTeacherReportBody_(body, meta, scores) {
   body.clear();
   try {
@@ -1360,91 +1423,63 @@ function buildTeacherReportBody_(body, meta, scores) {
     body.setMarginRight(54);
   } catch (eM) {}
 
-  try {
-    var blob = DriveApp.getFileById(WAAD_HEADER_IMAGE_ID).getBlob();
-    body.appendImage(blob).setWidth(520);
-  } catch (eImg) {
-    appendBrandColorBar_(body);
-  }
-
+  insertBrandedHeaderImage_(body, 'teacher');
   appendAccentRule_(body, WAAD_CYAN);
 
-  body.appendParagraph('WAAD ACADEMY · Staff Professional Record')
-    .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_NAVY)
-    .setBold(true)
-    .setFontSize(11);
+  appendExecutiveCoverTitle_(
+    body,
+    'STAFF PERFORMANCE FILE',
+    String(meta.name || ''),
+    'Waad Academy · Boys School · Jeddah · Academic Year 2026–2027 · Adults only'
+  );
 
-  body.appendParagraph('Staff Performance & Conduct Report')
-    .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_NAVY)
-    .setBold(true)
-    .setFontSize(18);
-
-  body.appendParagraph(String(meta.name || ''))
-    .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_NAVY)
-    .setBold(true)
-    .setFontSize(14);
-
-  body.appendParagraph('Boys School · Jeddah · Academic Year 2026–2027')
-    .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor(WAAD_NAVY)
-    .setFontSize(9);
-
-  appendAccentRule_(body, WAAD_CYAN);
-
-  // Profile
-  sectionHeading_(body, '1. Profile', WAAD_CYAN);
-  var profile = body.appendTable([
-    ['Staff Name', String(meta.name || ''), 'Staff ID', String(meta.id || '')],
-    ['Role', String(meta.role || 'teacher'), 'Campus', 'Boys School · Jeddah']
+  appendProfileMetaStrip_(body, [
+    { label: 'Staff ID', value: meta.id || '—' },
+    { label: 'Role', value: meta.role || 'teacher' },
+    { label: 'Campus', value: 'Boys · Jeddah' },
+    { label: 'Record', value: 'HR Professional' }
   ]);
-  styleMetaTable_(profile);
 
-  // Attendance KPI visual row
-  sectionHeading_(body, '2. Attendance metrics', WAAD_CYAN);
-  appendAttendanceKpiRow_(body, scores);
-  var att = body.appendTable([
-    ['Present rate', fmtRate_(scores.presentRate),
-     'Late rate', fmtRate_(scores.lateRate)],
-    ['Absent rate', fmtRate_(scores.absentRate),
-     'Last sync', String(scores.lastSync || 'Not synced')]
+  body.appendParagraph('').setSpacingAfter(2);
+
+  // Attendance KPI strip (3–4 cells)
+  appendKpiStrip_(body, [
+    { label: 'PRESENT', value: fmtRate_(scores.presentRate) },
+    { label: 'LATE', value: fmtRate_(scores.lateRate) },
+    { label: 'ABSENT', value: fmtRate_(scores.absentRate) },
+    { label: 'LAST SYNC', value: String(scores.lastSync || 'Not synced') }
   ]);
-  styleMetaTable_(att);
   body.appendParagraph('Attendance mix (Present · Late · Absent)')
-    .setFontSize(9).setForegroundColor('#666666');
+    .setFontSize(8).setForegroundColor('#71757D').setSpacingBefore(4);
   appendAttendanceMixBar_(body, scores);
 
-  // Ratings with visual bars
-  sectionHeading_(body, '3. Classroom management rating', WAAD_MAGENTA);
-  body.appendParagraph('Scale: 1 = needs support · 5 = excellent')
-    .setFontSize(8).setForegroundColor('#666666');
+  // Ratings — compact bars/chips (not heavy section banners)
+  body.appendParagraph('');
+  sectionHeading_(body, 'Performance ratings', WAAD_CYAN);
+  body.appendParagraph('Scale: 1 = needs support · 5 = excellent / exemplary punctuality')
+    .setFontSize(8).setForegroundColor('#71757D');
   appendRatingBar_(body, 'Classroom management', scores.classroom || 3);
-
-  sectionHeading_(body, '4. Between-class tardiness', WAAD_ORANGE);
-  body.appendParagraph('Scale: 1 = frequent tardiness · 5 = exemplary punctuality')
-    .setFontSize(8).setForegroundColor('#666666');
   appendRatingBar_(body, 'Between-class tardiness', scores.betweenClass || 3);
-
-  sectionHeading_(body, '5. Duty tardiness', WAAD_CYAN);
-  body.appendParagraph('Scale: 1 = frequent tardiness · 5 = exemplary punctuality')
-    .setFontSize(8).setForegroundColor('#666666');
   appendRatingBar_(body, 'Duty tardiness', scores.duty || 3);
 
+  // Short pointers only — Chronological Log is SoT (keep numbered headings for extract/restore)
   sectionHeading_(body, '6. Achievements', WAAD_CYAN);
-  body.appendParagraph('—').setForegroundColor('#888888');
+  body.appendParagraph('—').setForegroundColor('#888888').setFontSize(9);
+  body.appendParagraph('Short pointers only if not already in the chronological log.')
+    .setFontSize(7).setForegroundColor('#9AA0B8').setItalic(true);
 
   sectionHeading_(body, '7. Initiatives', WAAD_CYAN);
-  body.appendParagraph('—').setForegroundColor('#888888');
+  body.appendParagraph('—').setForegroundColor('#888888').setFontSize(9);
 
   sectionHeading_(body, '8. Complaints', WAAD_MAGENTA);
-  body.appendParagraph('—').setForegroundColor('#888888');
+  body.appendParagraph('—').setForegroundColor('#888888').setFontSize(9);
 
   sectionHeading_(body, '9. Issues', WAAD_ORANGE);
-  body.appendParagraph('—').setForegroundColor('#888888');
+  body.appendParagraph('—').setForegroundColor('#888888').setFontSize(9);
 
   sectionHeading_(body, '10. Chronological log', WAAD_NAVY);
+  body.appendParagraph('Single source of truth for notes, ratings context, and HR actions')
+    .setFontSize(8).setForegroundColor('#71757D').setSpacingAfter(2);
   var log = body.appendTable([
     ['Date', 'Type', 'Note', 'Recorded by']
   ]);
@@ -1459,6 +1494,7 @@ function buildTeacherReportBody_(body, meta, scores) {
   appendConfidentialFooter_(body, 'Staff HR professional record · Adults only · Ops confidential');
 }
 
+
 function fmtRate_(v) {
   var s = String(v == null ? '—' : v);
   if (s === '—' || s.indexOf('%') >= 0) return s;
@@ -1471,12 +1507,12 @@ function sectionHeading_(body, text, accent) {
   var bar = body.appendTable([[' ', text]]);
   bar.setBorderWidth(0);
   try {
-    bar.setColumnWidth(0, 6);
-    bar.setColumnWidth(1, 484);
+    bar.setColumnWidth(0, 4);
+    bar.setColumnWidth(1, 486);
   } catch (eW) {}
   bar.getCell(0, 0).setBackgroundColor(accent || WAAD_CYAN);
-  bar.getCell(0, 1).setBackgroundColor(WAAD_PAGE_BG)
-    .editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(12);
+  bar.getCell(0, 1).setBackgroundColor('#FFFFFF')
+    .editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(11);
   appendAccentRule_(body, accent || WAAD_CYAN);
 }
 
@@ -1508,6 +1544,7 @@ function appendRatingBar_(body, label, score) {
   for (var c = 0; c < 5; c++) {
     var cell = t.getCell(0, c);
     if (c < s) {
+      // filled cells pale cyan; tip cell cyan chip
       cell.setBackgroundColor(c === s - 1 ? WAAD_CYAN : WAAD_HEADER_ROW);
       cell.editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(11);
     } else {
@@ -2656,52 +2693,63 @@ function writeHealthSnapshotDoc_(student, rec) {
     created = true;
   }
   var body = doc.getBody();
-  // Brand header
   try {
-    var blob = DriveApp.getFileById(WAAD_HEADER_IMAGE_ID).getBlob();
-    body.appendImage(blob).setWidth(520);
-  } catch (eImg) {}
-  appendBrandColorBar_(body);
+    body.setMarginTop(36);
+    body.setMarginBottom(48);
+    body.setMarginLeft(54);
+    body.setMarginRight(54);
+  } catch (eM) {}
+
+  insertBrandedHeaderImage_(body, 'student');
   appendAccentRule_(body, WAAD_CYAN);
-  var h = body.appendParagraph('HEALTH OPERATIONAL SNAPSHOT');
-  h.setHeading(DocumentApp.ParagraphHeading.HEADING1);
-  h.setForegroundColor(WAAD_NAVY);
-  body.appendParagraph('Waad Academy · Boys School · Confidential operational use')
-    .setForegroundColor('#5A607A').setFontSize(9);
-  appendAccentRule_(body, WAAD_ORANGE);
+  appendExecutiveCoverTitle_(
+    body,
+    'HEALTH OPERATIONAL SNAPSHOT',
+    studentName,
+    'Waad Academy · Boys School · Ops use only · No ages recorded'
+  );
 
-  var info = body.appendTable([
-    ['Student', studentName, 'WAAD ID', studentId],
-    ['Grade', grade, 'Section', section],
-    ['Snapshot date', Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd'), 'Source', String(rec.source || 'Student Health').slice(0, 40)]
+  appendProfileMetaStrip_(body, [
+    { label: 'WA ID', value: studentId },
+    { label: 'Grade', value: grade || '—' },
+    { label: 'Section', value: section || '—' },
+    { label: 'Snapshot', value: Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd') }
   ]);
-  styleInfoTable_(info);
 
-  // KPI row
+  body.appendParagraph('').setSpacingAfter(2);
+
   var condition = String(rec.condition || '').trim() || '—';
   var allergy = String(rec.allergy || '').trim() || '—';
+  var meds = String(rec.medications || rec.meds || '').trim() || '—';
   var flags = [];
-  var blobLow = (String(rec.summary || '') + ' ' + condition + ' ' + allergy).toLowerCase();
+  var blobLow = (String(rec.summary || '') + ' ' + condition + ' ' + allergy + ' ' + meds).toLowerCase();
   if (/diabet/i.test(blobLow)) flags.push('Diabetic');
   if (/allerg/i.test(blobLow)) flags.push('Allergy alert');
   if (/asthma/i.test(blobLow)) flags.push('Asthma');
   if (/seizure|epilep/i.test(blobLow)) flags.push('Seizure risk');
-  if (/adhd|asd|autism|sen|iep/i.test(blobLow)) flags.push('Learning/SEN note');
-  var kpi = body.appendTable([[
-    'Flags: ' + (flags.length ? flags.join(' · ') : 'See details'),
-    'Clinic contact: ' + (String(rec.clinicContact || '').trim() || 'As on source file')
-  ]]);
-  kpi.setBorderWidth(0);
-  kpi.getCell(0, 0).setBackgroundColor(WAAD_NAVY_SOFT);
-  kpi.getCell(0, 1).setBackgroundColor('#E0F7FA');
+  if (/adhd|asd|autism|sen|iep/i.test(blobLow)) flags.push('SEN note');
+  var senFlag = flags.length ? flags.join(' · ') : 'None flagged';
+  var clinic = String(rec.clinicContact || '').trim() || 'As on source';
 
+  // Compact health KPI row — SEN / Meds / Conditions / Clinic
+  appendKpiStrip_(body, [
+    { label: 'SEN / FLAGS', value: senFlag.length > 28 ? senFlag.slice(0, 28) + '…' : senFlag },
+    { label: 'MEDS', value: meds.length > 24 ? meds.slice(0, 24) + '…' : meds },
+    { label: 'CONDITIONS', value: (condition === '—' && rec.summary ? String(rec.summary).slice(0, 24) : condition).slice(0, 28) },
+    { label: 'CLINIC', value: clinic.length > 24 ? clinic.slice(0, 24) + '…' : clinic }
+  ]);
+
+  body.appendParagraph('');
   body.appendParagraph('Operational details (condensed — not a full medical file)')
-    .setBold(true).setForegroundColor(WAAD_NAVY);
+    .setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(11);
+  appendAccentRule_(body, WAAD_CYAN);
   var detailTable = body.appendTable([
     ['Item', 'Operational note'],
     ['Condition / status', condition === '—' && rec.summary ? String(rec.summary).slice(0, 280) : condition],
     ['Allergies', allergy],
-    ['Accommodations / clinic notes', String(rec.accommodations || rec.summary || '—').slice(0, 400)]
+    ['Medications', meds],
+    ['Accommodations / clinic notes', String(rec.accommodations || rec.summary || '—').slice(0, 400)],
+    ['Source', String(rec.source || 'Student Health').slice(0, 60)]
   ]);
   styleIncidentTableHeaderLike_(detailTable);
 
