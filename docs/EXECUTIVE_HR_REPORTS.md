@@ -1,8 +1,3 @@
-# Superseded — see Editorial Dossier
+# Superseded — see Stats Dashboard
 
-The executive HR / light-KPI visual system was rejected as looking like the same template.
-
-**Current system:** [EDITORIAL_DOSSIER.md](./EDITORIAL_DOSSIER.md)
-
-- Labels: STUDENT PASTORAL DOSSIER / STAFF PERFORMANCE DOSSIER
-- Tall 1600×900 covers, cream paper, charcoal type, cyan left rail, timeline log, KPI number cards, magenta/cyan rating meters
+**Current system:** [STATS_DASHBOARD_REPORTS.md](./STATS_DASHBOARD_REPORTS.md)

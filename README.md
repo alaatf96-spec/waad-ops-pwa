@@ -133,3 +133,7 @@ Folders:
 5. Mark attendance; after ~8s it uploads, or tap **Sync attendance now**.
 
 Without the client ID in the build, device unlock still works; Sync tab explains the missing config.
+
+## Drive report visuals
+
+Body-first **stats dashboard** (not cover-first). See [`docs/STATS_DASHBOARD_REPORTS.md`](docs/STATS_DASHBOARD_REPORTS.md) and real campus photo provenance in [`docs/assets/campus/SOURCES.md`](docs/assets/campus/SOURCES.md).
