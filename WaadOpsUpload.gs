@@ -1986,12 +1986,12 @@ function extractTeacherNotesAndLog_(body) {
       else if (t.indexOf('9. Issues') >= 0) current = 'issues';
       else if (t.indexOf('10. Chronological') >= 0) current = null;
       else if (current && t.indexOf('•') === 0) out[current].push(t);
-      // Ratings lines: "Classroom management: 4 / 5"
-      var rm = t.match(/Classroom management:\s*(\d)/i);
+      // Ratings lines: legacy "Classroom management: 4 / 5" or dossier "Classroom  ·  4 / 5"
+      var rm = t.match(/Classroom(?:\s+management)?\s*[·:]\s*(\d)/i);
       if (rm) out.classroom = clampScore_(rm[1]);
-      var rb = t.match(/Between-class tardiness:\s*(\d)/i);
+      var rb = t.match(/Between-class(?:\s+tardiness)?\s*[·:]\s*(\d)/i);
       if (rb) out.betweenClass = clampScore_(rb[1]);
-      var rd = t.match(/Duty tardiness:\s*(\d)/i);
+      var rd = t.match(/Duty(?:\s+tardiness)?\s*[·:]\s*(\d)/i);
       if (rd) out.duty = clampScore_(rd[1]);
     } else if (child.getType() === DocumentApp.ElementType.TABLE) {
       // Section heading tables: cell text may hold "6. Achievements"
