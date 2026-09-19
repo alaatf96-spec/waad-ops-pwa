@@ -32,3 +32,6 @@ npm install && npm run build && npm run preview
 ```
 
 Open preview URL → Unlock this device → mark attendance → Export CSV → Behavior → + Incident → Draft MoE-style report.
+
+## 2026-09-19 — Stats dashboard reports
+Body-first HUD Docs (charts/meters/Venn). Real Jeddah campus header strips. Commit `a42c6ae`. Parent must redeploy Apps Script; samples Yahya + Nihma.
