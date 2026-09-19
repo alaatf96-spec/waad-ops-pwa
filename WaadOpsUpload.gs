@@ -1,19 +1,24 @@
 /**
- * Waad Ops PWA → Drive upload relay (executive HR visual system)
+ * Waad Ops PWA → Drive upload relay (editorial dossier / case-file visual system)
  * Deploy as Web app: Execute as Me, Who has access: Anyone
+ *
+ * Design: cream paper #FBF9F6, charcoal #1C1C28, cyan left-rail only, magenta/orange chips.
+ * Covers: tall 1600×900 Moda heroes — STUDENT PASTORAL DOSSIER / STAFF PERFORMANCE DOSSIER.
+ * Log: chronological timeline table (narrow date + narrative). KPI: 4 large number cards.
+ * Teacher ratings: 5-cell meters (filled magenta/cyan vs empty grey).
  *
  * behavior-incident / behavior-incidents-batch:
  *   find/create "{StudentName} — {id}" under grade folder;
- *   find/create Doc "Long-Term Behavior Incident Report — {Name}" (executive HR Student Behavior File);
- *   append incident rows in concise professional school-admin / HR English
+ *   find/create Doc "Long-Term Behavior Incident Report — {Name}" (Student Pastoral Dossier);
+ *   append timeline rows in concise professional school-admin / HR English
  *   (toHrProse_ — never paste WhatsApp/chat slang or raw user wording).
  *
  * attendance / attendance-sheet:
- *   create/update sophisticated Spreadsheet "Assembly Attendance — YYYY-MM-DD"
+ *   create/update Spreadsheet "Assembly Attendance — YYYY-MM-DD"
  *   (#, Staff, Role, Status, Time, Notes + KPI summary).
  *
  * teacher-note / teacher-ratings / teacher-attendance-sync / teacher-scaffold:
- *   Staff HR Docs under 06_Teacher_HR (executive HR Staff Performance File).
+ *   Staff HR Docs under 06_Teacher_HR (Staff Performance Dossier).
  *   teacher-note text/action rewritten via toHrProse_ (professional HR English).
  *
  * upgrade-teacher-docs / upgradeExistingTeacherDocs_ — restyle Staff Performance Docs
@@ -39,35 +44,40 @@ var GRADE_FOLDERS = {
 };
 var TOKEN = 'r-M-LW1rIuLxESItwMg10v13SYr0P7aH';
 
-/** Executive HR Doc header PNGs (Moda export) in Waad Ops Drive */
-var WAAD_HEADER_IMAGE_ID = '136Ts-gH7RdjygWL2Ee-eyTVPqb-4izEC'; // Student Behavior File
-var WAAD_TEACHER_HEADER_IMAGE_ID = '16dDAL7NzH1MyZj6pOFxwXzRJbdgeFyGO'; // Staff Performance File
+/** Editorial dossier tall covers (Moda 1600×900) in Waad Ops Drive */
+var WAAD_HEADER_IMAGE_ID = '1UAO-zmO94MyJbE5FbdjTe-vu46gNiJBH'; // Student Pastoral Dossier
+var WAAD_TEACHER_HEADER_IMAGE_ID = '1sIDDdAbMifJFhz1WSsrFEa00XhWz9Xy5'; // Staff Performance Dossier
 /** Optional owned accent sticker (houses) */
 var WAAD_STICKER_IMAGE_ID = '1nw-JvYXBGqOT_LMNuIMNKG9LTED5PS8E';
-var WAAD_HEADER_SOFT = '#EEF0F6'; // alternate pale table header
+var WAAD_HEADER_SOFT = '#F3EFE8'; // cream soft panel (NOT pale-cyan spreadsheet)
 
-var WAAD_NAVY = '#2A3077';
+/** Editorial dossier palette — charcoal body, cream paper, cyan rail only */
+var WAAD_CHARCOAL = '#1C1C28';
+var WAAD_NAVY = '#1C1C28'; // alias kept for legacy call sites
 var WAAD_CYAN = '#1FC2F2';
 var WAAD_MAGENTA = '#E4007E';
 var WAAD_ORANGE = '#EF7A06';
-var WAAD_NAVY_SOFT = '#E8EAF6';
-var WAAD_ROW_ALT = '#F5F7FA';
-var WAAD_PAGE_BG = '#F7F8FC';
-var WAAD_LINE = '#E6E8F0';
-var WAAD_HEADER_ROW = '#E8F7FC';  // pale cyan header (light theme)
+var WAAD_NAVY_SOFT = '#F3EFE8';
+var WAAD_ROW_ALT = '#F7F3EC'; // cream alt rows
+var WAAD_PAGE_BG = '#FBF9F6'; // warm cream paper
+var WAAD_LINE = '#E8E2D8';
+var WAAD_HEADER_ROW = '#F3EFE8'; // cream table header — never pale-cyan Excel look
+var WAAD_EMPTY_METER = '#D9D5CE';
 var WAAD_CHIP_BG_MAGENTA = '#FCE4F0';
 var WAAD_CHIP_BG_ORANGE = '#FFF0E0';
+var WAAD_CHIP_BG_CYAN = '#E8F7FC';
 var COLOR_PRESENT = '#C8E6C9';
 var COLOR_LATE = '#FFE082';
 var COLOR_ABSENT = '#FFCDD2';
 
-/** Insert branded executive header image; fall back to light brand bar. kind: student|teacher|health */
+/** Insert tall editorial dossier cover image; fall back to cream brand bar. kind: student|teacher|health */
 function insertBrandedHeaderImage_(body, kind) {
   var id = WAAD_HEADER_IMAGE_ID;
   if (kind === 'teacher') id = WAAD_TEACHER_HEADER_IMAGE_ID || WAAD_HEADER_IMAGE_ID;
   try {
     var blob = DriveApp.getFileById(id).getBlob();
-    body.appendImage(blob).setWidth(520);
+    // Tall 16:9 cover — ~full content width (A4 body ≈ 540pt)
+    body.appendImage(blob).setWidth(540);
     return true;
   } catch (eImg) {
     appendBrandColorBar_(body);
@@ -75,9 +85,25 @@ function insertBrandedHeaderImage_(body, kind) {
   }
 }
 
-/** Single-row profile meta chips (label above value look via 2-row table). */
-function appendProfileMetaStrip_(body, cells) {
-  // cells: [{label, value}, ...] up to 4
+/** Thin cyan vertical left rail (signature accent — NOT a horizontal title rule). */
+function appendCyanLeftRail_(body) {
+  var t = body.appendTable([['', '']]);
+  t.setBorderWidth(0);
+  try {
+    t.setColumnWidth(0, 5);
+    t.setColumnWidth(1, 505);
+  } catch (eW) {}
+  t.getCell(0, 0).setBackgroundColor(WAAD_CYAN);
+  t.getCell(0, 1).setBackgroundColor('#FFFFFF');
+  try {
+    t.getCell(0, 0).getChild(0).asParagraph().setFontSize(2).setSpacingBefore(0).setSpacingAfter(0);
+    t.getCell(0, 1).getChild(0).asParagraph().setFontSize(2).setSpacingBefore(0).setSpacingAfter(0);
+  } catch (eR) {}
+}
+
+/** Case meta row: File No. · Campus · Grade/Role · AY · Status chip cells. */
+function appendCaseMetaRow_(body, cells) {
+  // cells: [{label, value, chip?: 'magenta'|'orange'|'cyan'}, ...]
   var labels = [];
   var values = [];
   for (var i = 0; i < cells.length; i++) {
@@ -86,61 +112,73 @@ function appendProfileMetaStrip_(body, cells) {
   }
   var t = body.appendTable([labels, values]);
   t.setBorderColor(WAAD_LINE);
-  t.setBorderWidth(0.5);
-  var colW = Math.floor(500 / Math.max(1, cells.length));
+  t.setBorderWidth(0.4);
+  var colW = Math.floor(510 / Math.max(1, cells.length));
   for (var c = 0; c < cells.length; c++) {
-    t.getCell(0, c).setBackgroundColor(WAAD_HEADER_SOFT)
-      .editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(8);
-    t.getCell(1, c).setBackgroundColor('#FFFFFF')
-      .editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(11);
+    t.getCell(0, c).setBackgroundColor(WAAD_PAGE_BG)
+      .editAsText().setForegroundColor('#6B6570').setBold(true).setFontSize(7);
+    var chip = cells[c].chip || '';
+    var bg = '#FFFFFF';
+    var fg = WAAD_CHARCOAL;
+    if (chip === 'magenta') { bg = WAAD_CHIP_BG_MAGENTA; fg = WAAD_MAGENTA; }
+    else if (chip === 'orange') { bg = WAAD_CHIP_BG_ORANGE; fg = WAAD_ORANGE; }
+    else if (chip === 'cyan') { bg = WAAD_CHIP_BG_CYAN; fg = WAAD_CYAN; }
+    t.getCell(1, c).setBackgroundColor(bg)
+      .editAsText().setForegroundColor(fg).setBold(true).setFontSize(10);
     try { t.setColumnWidth(c, colW); } catch (eW) {}
   }
 }
 
-/** KPI metric strip — 3–4 cells (label row + value row). */
+/** Alias — one profile/case meta block only. */
+function appendProfileMetaStrip_(body, cells) {
+  appendCaseMetaRow_(body, cells);
+}
+
+/** KPI as 4 large number cards — big figures, tiny labels (NOT spreadsheet strip). */
 function appendKpiStrip_(body, cells) {
-  var labels = [];
   var values = [];
+  var labels = [];
   for (var i = 0; i < cells.length; i++) {
-    labels.push(String(cells[i].label || ''));
     values.push(String(cells[i].value == null ? '—' : cells[i].value));
+    labels.push(String(cells[i].label || ''));
   }
-  var t = body.appendTable([labels, values]);
-  t.setBorderWidth(0);
-  var colW = Math.floor(500 / Math.max(1, cells.length));
-  var soft = [WAAD_HEADER_ROW, WAAD_HEADER_SOFT, WAAD_CHIP_BG_ORANGE, WAAD_CHIP_BG_MAGENTA];
-  var fg = [WAAD_NAVY, WAAD_NAVY, WAAD_ORANGE, WAAD_MAGENTA];
+  // Row 0 = big numbers, Row 1 = tiny labels
+  var t = body.appendTable([values, labels]);
+  t.setBorderWidth(0.4);
+  t.setBorderColor(WAAD_LINE);
+  var colW = Math.floor(510 / Math.max(1, cells.length));
+  var accents = [WAAD_CHARCOAL, WAAD_CYAN, WAAD_ORANGE, WAAD_MAGENTA];
   for (var c = 0; c < cells.length; c++) {
-    var bi = c % soft.length;
-    t.getCell(0, c).setBackgroundColor(soft[bi])
-      .editAsText().setForegroundColor(fg[bi]).setBold(true).setFontSize(8);
-    t.getCell(1, c).setBackgroundColor('#FFFFFF')
-      .editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(14);
+    var fg = accents[c % accents.length];
+    t.getCell(0, c).setBackgroundColor('#FFFFFF')
+      .editAsText().setForegroundColor(fg).setBold(true).setFontSize(22);
+    t.getCell(1, c).setBackgroundColor(WAAD_PAGE_BG)
+      .editAsText().setForegroundColor('#6B6570').setBold(true).setFontSize(7);
     try { t.setColumnWidth(c, colW); } catch (eK) {}
   }
 }
 
-/** Doc-type label + person name + campus line (executive cover hierarchy). */
+/** Dossier title: type label + person name (charcoal) + optional subtitle. */
 function appendExecutiveCoverTitle_(body, docTypeLabel, personName, subtitle) {
   body.appendParagraph(String(docTypeLabel || ''))
     .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
-    .setForegroundColor(WAAD_CYAN)
+    .setForegroundColor(WAAD_MAGENTA)
     .setBold(true)
-    .setFontSize(10)
+    .setFontSize(9)
     .setSpacingAfter(2)
-    .setSpacingBefore(6);
+    .setSpacingBefore(8);
   body.appendParagraph(String(personName || ''))
     .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
-    .setForegroundColor(WAAD_NAVY)
+    .setForegroundColor(WAAD_CHARCOAL)
     .setBold(true)
-    .setFontSize(20)
+    .setFontSize(22)
     .setSpacingAfter(2);
   if (subtitle) {
     body.appendParagraph(String(subtitle))
       .setAlignment(DocumentApp.HorizontalAlignment.LEFT)
-      .setForegroundColor('#5A607A')
+      .setForegroundColor('#6B6570')
       .setFontSize(9)
-      .setSpacingAfter(8);
+      .setSpacingAfter(6);
   }
 }
 
@@ -578,48 +616,49 @@ function findOrCreateReportDoc_(folder, title, meta) {
   body.clear();
   insertPremiumStudentDocHeader_(body, meta, { total: 0, lastDate: '—' });
   var incidents = body.appendTable([
-    ['Date', 'Incident type', 'Description', 'Action taken', 'Recorded by']
+    ['Date', 'Description', 'Action']
   ]);
-  styleIncidentsTableHeader_(incidents);
-  setIncidentsColWidths_(incidents);
+  styleTimelineTableHeader_(incidents);
+  setTimelineColWidths_(incidents);
   body.appendParagraph('');
-  appendAccentRule_(body, WAAD_CYAN);
+  appendCyanLeftRail_(body);
   body.appendParagraph('Summary notes / end-of-year review:')
     .setBold(true)
-    .setForegroundColor(WAAD_NAVY);
+    .setForegroundColor(WAAD_CHARCOAL);
   body.appendParagraph('—');
   body.appendParagraph('');
   body.appendParagraph('Teacher / Ops signature: ____________________    Date: __________');
   body.appendParagraph('Head of Section signature: ____________________    Date: __________');
-  appendConfidentialFooter_(body, 'Student long-term behavior record · Boys School · Confidential');
+  appendConfidentialFooter_(body, 'Student pastoral dossier · Boys School · Confidential');
   doc.saveAndClose();
   return { doc: DocumentApp.openById(doc.getId()), created: true };
 }
 
-/** Executive HR cover: header image → doc type → name → meta row → KPI strip → Chronological Log heading. No ages. */
+/** Editorial dossier cover: tall hero → dossier label → name → case meta → KPI cards → timeline log. No ages. */
 function insertPremiumStudentDocHeader_(body, meta, kpi) {
   try {
-    body.setMarginTop(36);
+    body.setMarginTop(28);
     body.setMarginBottom(48);
-    body.setMarginLeft(54);
-    body.setMarginRight(54);
+    body.setMarginLeft(48);
+    body.setMarginRight(48);
   } catch (eM) {}
 
   insertBrandedHeaderImage_(body, 'student');
-  appendAccentRule_(body, WAAD_CYAN);
+  appendCyanLeftRail_(body);
 
   appendExecutiveCoverTitle_(
     body,
-    'STUDENT BEHAVIOR FILE',
+    'STUDENT PASTORAL DOSSIER',
     String(meta.studentName || ''),
-    'Waad Academy · Boys School · Academic Year 2026–2027 · Confidential'
+    'Waad Academy · Boys School · Academic Year 2026–2027 · Case file'
   );
 
-  appendProfileMetaStrip_(body, [
-    { label: 'WA ID', value: meta.studentId || '—' },
-    { label: 'Grade', value: meta.grade || '—' },
-    { label: 'Section', value: meta.section || '—' },
-    { label: 'Campus', value: 'Boys · Jeddah' }
+  // One profile / case meta block only
+  appendCaseMetaRow_(body, [
+    { label: 'FILE NO.', value: meta.studentId || '—' },
+    { label: 'CAMPUS', value: 'Boys · Jeddah' },
+    { label: 'GRADE', value: (meta.grade || '—') + (meta.section ? ' · ' + meta.section : '') },
+    { label: 'AY 26–27', value: 'Active', chip: 'magenta' }
   ]);
 
   body.appendParagraph('').setSpacingAfter(2);
@@ -629,34 +668,33 @@ function insertPremiumStudentDocHeader_(body, meta, kpi) {
   appendKpiStrip_(body, [
     { label: 'LOG ENTRIES', value: String(total) },
     { label: 'LAST RECORDED', value: String(last) },
-    { label: 'ACADEMIC YEAR', value: '2026–27' },
-    { label: 'STATUS', value: 'Active' }
+    { label: 'ACADEMIC YEAR', value: '26–27' },
+    { label: 'STATUS', value: 'OPEN' }
   ]);
 
   body.appendParagraph('');
-  var incidHead = body.appendParagraph('Chronological Log');
-  incidHead.setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(12).setSpacingAfter(2);
-  body.appendParagraph('Single source of truth for behavior incidents · HR English only')
-    .setFontSize(8).setForegroundColor('#71757D').setSpacingAfter(4);
-  appendAccentRule_(body, WAAD_CYAN);
+  var incidHead = body.appendParagraph('Chronological log — timeline');
+  incidHead.setBold(true).setForegroundColor(WAAD_CHARCOAL).setFontSize(12).setSpacingAfter(2);
+  body.appendParagraph('Single source of truth · Description / Action narrative · HR English only · No ages')
+    .setFontSize(8).setForegroundColor('#6B6570').setSpacingAfter(4);
 }
 
 
 function appendBrandColorBar_(body) {
-  // Light fallback when header image missing: white strip + navy wordmark + thin cyan rule + small chips
-  var bar = body.appendTable([['WAAD ACADEMY', 'Boys School', 'OPS', 'AY 2026–27']]);
+  // Cream fallback when cover image missing: charcoal wordmark + magenta CONFIDENTIAL chip + cyan rail
+  var bar = body.appendTable([['WAAD ACADEMY', 'Boys School', 'CONFIDENTIAL', 'AY 26–27']]);
   bar.setBorderWidth(0);
   try {
-    bar.getCell(0, 0).setBackgroundColor('#FFFFFF')
-      .editAsText().setText('WAAD ACADEMY').setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(14);
-    bar.getCell(0, 1).setBackgroundColor(WAAD_PAGE_BG)
-      .editAsText().setText('Boys School').setForegroundColor(WAAD_NAVY).setFontSize(10);
-    bar.getCell(0, 2).setBackgroundColor(WAAD_CHIP_BG_MAGENTA)
-      .editAsText().setText('OPS').setForegroundColor(WAAD_MAGENTA).setBold(true).setFontSize(9);
+    bar.getCell(0, 0).setBackgroundColor(WAAD_PAGE_BG)
+      .editAsText().setText('WAAD ACADEMY').setForegroundColor(WAAD_CHARCOAL).setBold(true).setFontSize(14);
+    bar.getCell(0, 1).setBackgroundColor('#FFFFFF')
+      .editAsText().setText('Boys School').setForegroundColor(WAAD_CHARCOAL).setFontSize(10);
+    bar.getCell(0, 2).setBackgroundColor(WAAD_MAGENTA)
+      .editAsText().setText('CONFIDENTIAL').setForegroundColor('#FFFFFF').setBold(true).setFontSize(9);
     bar.getCell(0, 3).setBackgroundColor(WAAD_CHIP_BG_ORANGE)
-      .editAsText().setText('AY 2026–27').setForegroundColor(WAAD_ORANGE).setBold(true).setFontSize(9);
+      .editAsText().setText('AY 26–27').setForegroundColor(WAAD_ORANGE).setBold(true).setFontSize(9);
   } catch (eB) {}
-  appendAccentRule_(body, WAAD_CYAN);
+  appendCyanLeftRail_(body);
 }
 
 function appendAccentRule_(body, color) {
@@ -673,41 +711,53 @@ function appendAccentRule_(body, color) {
 
 function appendConfidentialFooter_(body, line) {
   body.appendParagraph('');
-  appendAccentRule_(body, WAAD_CYAN);
+  appendCyanLeftRail_(body);
   var p = body.appendParagraph('CONFIDENTIAL — ' + (line || 'Waad Academy Boys School · Ops use only'));
   p.setAlignment(DocumentApp.HorizontalAlignment.CENTER)
-    .setForegroundColor('#666666')
+    .setForegroundColor(WAAD_MAGENTA)
     .setFontSize(8)
-    .setItalic(true);
+    .setBold(true);
 }
 
-function styleIncidentsTableHeader_(table) {
+/** Timeline header — cream (no navy/cyan spreadsheet fill); charcoal labels. */
+function styleTimelineTableHeader_(table) {
   table.setBorderColor(WAAD_LINE);
-  table.setBorderWidth(0.5);
+  table.setBorderWidth(0.4);
   var row = table.getRow(0);
   for (var c = 0; c < row.getNumCells(); c++) {
     var cell = row.getCell(c);
-    cell.setBackgroundColor(WAAD_HEADER_ROW);
-    cell.editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(9);
+    cell.setBackgroundColor(WAAD_PAGE_BG);
+    cell.editAsText().setForegroundColor(WAAD_CHARCOAL).setBold(true).setFontSize(8);
   }
 }
 
-function setIncidentsColWidths_(table) {
+function styleIncidentsTableHeader_(table) {
+  styleTimelineTableHeader_(table);
+}
+
+function setTimelineColWidths_(table) {
   try {
-    table.setColumnWidth(0, 72);   // Date
-    table.setColumnWidth(1, 90);   // Type
-    table.setColumnWidth(2, 180);  // Description
-    table.setColumnWidth(3, 110);  // Action
-    table.setColumnWidth(4, 88);   // Recorded by
+    table.setColumnWidth(0, 78);   // Date — narrow
+    table.setColumnWidth(1, 260);  // Description / narrative
+    table.setColumnWidth(2, 172);  // Action
   } catch (e) {}
+}
+
+function setIncidentsColWidths_(table) {
+  setTimelineColWidths_(table);
 }
 
 function styleIncidentDataRow_(row, index) {
   var bg = (index % 2 === 1) ? WAAD_ROW_ALT : '#FFFFFF';
-  for (var c = 0; c < row.getNumCells(); c++) {
+  var n = row.getNumCells();
+  for (var c = 0; c < n; c++) {
     try {
       row.getCell(c).setBackgroundColor(bg);
-      row.getCell(c).editAsText().setFontSize(9).setForegroundColor('#222222');
+      if (c === 0) {
+        row.getCell(c).editAsText().setFontSize(9).setForegroundColor(WAAD_CHARCOAL).setBold(true);
+      } else {
+        row.getCell(c).editAsText().setFontSize(9).setForegroundColor(WAAD_CHARCOAL);
+      }
     } catch (eC) {}
   }
 }
@@ -787,25 +837,27 @@ function filterBulletsAgainstLog_(bullets, logRows) {
 function appendIncidentRow_(doc, row) {
   var body = doc.getBody();
   var table = null;
+  var ncols = 0;
   var n = body.getNumChildren();
   for (var i = n - 1; i >= 0; i--) {
     var child = body.getChild(i);
     if (child.getType() !== DocumentApp.ElementType.TABLE) continue;
     var candidate = child.asTable();
-    var ncols = 0;
+    var nc = 0;
     try {
-      ncols = candidate.getRow(0).getNumCells();
+      nc = candidate.getRow(0).getNumCells();
     } catch (eCols) {
       continue;
     }
-    if (ncols < 5) continue;
+    if (nc < 3) continue;
     var h = '';
     try { h = candidate.getCell(0, 0).getText(); } catch (eH) {}
     if (String(h).indexOf('Date') === 0) {
       table = candidate;
+      ncols = nc;
       break;
     }
-    if (!table) table = candidate;
+    if (!table) { table = candidate; ncols = nc; }
   }
   if (!table) {
     body.appendParagraph(
@@ -814,16 +866,31 @@ function appendIncidentRow_(doc, row) {
     doc.saveAndClose();
     return;
   }
-  if (tableHasDuplicateRow_(table, row.date, row.category, row.details)) {
+  var descKey = String(row.details || '');
+  if (row.category) descKey = String(row.category) + ' · ' + descKey;
+  if (tableHasDuplicateRow_(table, row.date, row.category, row.details) ||
+      tableHasDuplicateRow_(table, row.date, '', descKey)) {
     doc.saveAndClose();
     return { deduped: true };
   }
   var r = table.appendTableRow();
-  r.appendTableCell(String(row.date || ''));
-  r.appendTableCell(String(row.category || ''));
-  r.appendTableCell(String(row.details || ''));
-  r.appendTableCell(String(row.action || ''));
-  r.appendTableCell(String(row.recordedBy || 'Waad Ops PWA'));
+  if (ncols >= 5) {
+    // Legacy 5-col table
+    r.appendTableCell(String(row.date || ''));
+    r.appendTableCell(String(row.category || ''));
+    r.appendTableCell(String(row.details || ''));
+    r.appendTableCell(String(row.action || ''));
+    r.appendTableCell(String(row.recordedBy || 'Waad Ops PWA'));
+  } else {
+    // Editorial timeline: Date | Description | Action
+    var narrative = '';
+    if (row.category) narrative += '[' + String(row.category) + '] ';
+    narrative += String(row.details || '');
+    if (row.recordedBy) narrative += '\nRecorded by: ' + String(row.recordedBy);
+    r.appendTableCell(String(row.date || ''));
+    r.appendTableCell(narrative);
+    r.appendTableCell(String(row.action || ''));
+  }
   styleIncidentDataRow_(r, table.getNumRows() - 1);
   doc.saveAndClose();
 }
@@ -831,7 +898,7 @@ function appendIncidentRow_(doc, row) {
 /**
  * Webhook: upgrade-student-docs
  * Discovers Long-Term Behavior Docs under G4/G5/G6 (or uses body.items / docIds).
- * Preserves incident table rows (deduped); rebuilds executive HR cover + KPI strip.
+ * Preserves incident table rows (deduped); rebuilds editorial dossier cover + KPI cards + timeline.
  * Optional body.offset / body.limit for batching (Apps Script time limits).
  */
 function handleUpgradeStudentDocs_(body) {
@@ -890,7 +957,7 @@ function collectStudentReportDocs_(grades) {
 }
 
 /**
- * Restyle existing student behavior Docs to executive HR Student Behavior File.
+ * Restyle existing student behavior Docs to editorial Student Pastoral Dossier.
  * Pass array of Document IDs or {docId, studentName, studentId, grade, section}.
  * Preserves incident history from the Date-header table.
  */
@@ -928,25 +995,36 @@ function upgradeExistingStudentDocs_(items) {
       body.clear();
       insertPremiumStudentDocHeader_(body, meta, { total: rows.length, lastDate: lastDate || '—' });
       var incidents = body.appendTable([
-        ['Date', 'Incident type', 'Description', 'Action taken', 'Recorded by']
+        ['Date', 'Description', 'Action']
       ]);
-      styleIncidentsTableHeader_(incidents);
-      setIncidentsColWidths_(incidents);
+      styleTimelineTableHeader_(incidents);
+      setTimelineColWidths_(incidents);
       for (var r = 0; r < rows.length; r++) {
+        var cells = rows[r];
         var tr = incidents.appendTableRow();
-        for (var c = 0; c < 5; c++) {
-          tr.appendTableCell(String(rows[r][c] || ''));
-        }
+        // extractIncidentRows_ normalizes to [date, type, desc, action, by]
+        var dateC = String(cells[0] || '');
+        var typeC = String(cells[1] || '').trim();
+        var descC = String(cells[2] || '');
+        var actC = String(cells[3] || '');
+        var byC = String(cells[4] || '').trim();
+        var narrative = '';
+        if (typeC) narrative += '[' + typeC + '] ';
+        narrative += descC;
+        if (byC) narrative += (narrative ? '\n' : '') + 'Recorded by: ' + byC;
+        tr.appendTableCell(dateC);
+        tr.appendTableCell(narrative);
+        tr.appendTableCell(actC);
         styleIncidentDataRow_(tr, r + 1);
       }
       body.appendParagraph('');
-      appendAccentRule_(body, WAAD_CYAN);
-      body.appendParagraph('Summary notes / end-of-year review:').setBold(true).setForegroundColor(WAAD_NAVY);
+      appendCyanLeftRail_(body);
+      body.appendParagraph('Summary notes / end-of-year review:').setBold(true).setForegroundColor(WAAD_CHARCOAL);
       body.appendParagraph('—');
       body.appendParagraph('');
       body.appendParagraph('Teacher / Ops signature: ____________________    Date: __________');
       body.appendParagraph('Head of Section signature: ____________________    Date: __________');
-      appendConfidentialFooter_(body, 'Student long-term behavior record · Boys School · Confidential');
+      appendConfidentialFooter_(body, 'Student pastoral dossier · Boys School · Confidential');
       doc.saveAndClose();
       upgraded++;
     } catch (err) {
@@ -964,16 +1042,36 @@ function extractIncidentRows_(body) {
     if (child.getType() !== DocumentApp.ElementType.TABLE) continue;
     var t = child.asTable();
     try {
-      if (t.getRow(0).getNumCells() < 5) continue;
+      var nc = t.getRow(0).getNumCells();
+      if (nc < 3) continue;
       if (String(t.getCell(0, 0).getText()).indexOf('Date') !== 0) continue;
       for (var r = 1; r < t.getNumRows(); r++) {
-        out.push([
-          t.getCell(r, 0).getText(),
-          t.getCell(r, 1).getText(),
-          t.getCell(r, 2).getText(),
-          t.getCell(r, 3).getText(),
-          t.getCell(r, 4).getText()
-        ]);
+        if (nc >= 5) {
+          out.push([
+            t.getCell(r, 0).getText(),
+            t.getCell(r, 1).getText(),
+            t.getCell(r, 2).getText(),
+            t.getCell(r, 3).getText(),
+            t.getCell(r, 4).getText()
+          ]);
+        } else if (nc === 3) {
+          // Timeline: Date | Description | Action → normalize to 5-slot for upgrade
+          out.push([
+            t.getCell(r, 0).getText(),
+            '',
+            t.getCell(r, 1).getText(),
+            t.getCell(r, 2).getText(),
+            ''
+          ]);
+        } else {
+          out.push([
+            t.getCell(r, 0).getText(),
+            nc > 1 ? t.getCell(r, 1).getText() : '',
+            nc > 2 ? t.getCell(r, 2).getText() : '',
+            nc > 3 ? t.getCell(r, 3).getText() : '',
+            ''
+          ]);
+        }
       }
       break;
     } catch (e) {}
@@ -1413,54 +1511,54 @@ function isTeacherDocStub_(body) {
   }
 }
 
-/** Executive HR Staff Performance File — cover → meta → KPI → ratings chips → short pointers → Chronological Log SoT. */
+/** Staff Performance Dossier — tall cover → case meta → KPI cards → rating meters → short pointers → timeline log SoT. */
 function buildTeacherReportBody_(body, meta, scores) {
   body.clear();
   try {
-    body.setMarginTop(36);
+    body.setMarginTop(28);
     body.setMarginBottom(48);
-    body.setMarginLeft(54);
-    body.setMarginRight(54);
+    body.setMarginLeft(48);
+    body.setMarginRight(48);
   } catch (eM) {}
 
   insertBrandedHeaderImage_(body, 'teacher');
-  appendAccentRule_(body, WAAD_CYAN);
+  appendCyanLeftRail_(body);
 
   appendExecutiveCoverTitle_(
     body,
-    'STAFF PERFORMANCE FILE',
+    'STAFF PERFORMANCE DOSSIER',
     String(meta.name || ''),
     'Waad Academy · Boys School · Jeddah · Academic Year 2026–2027 · Adults only'
   );
 
-  appendProfileMetaStrip_(body, [
-    { label: 'Staff ID', value: meta.id || '—' },
-    { label: 'Role', value: meta.role || 'teacher' },
-    { label: 'Campus', value: 'Boys · Jeddah' },
-    { label: 'Record', value: 'HR Professional' }
+  appendCaseMetaRow_(body, [
+    { label: 'FILE NO.', value: meta.id || '—' },
+    { label: 'CAMPUS', value: 'Boys · Jeddah' },
+    { label: 'ROLE', value: meta.role || 'teacher' },
+    { label: 'AY 26–27', value: 'Active', chip: 'magenta' }
   ]);
 
   body.appendParagraph('').setSpacingAfter(2);
 
-  // Attendance KPI strip (3–4 cells)
+  // 4 large number cards (big figures, tiny labels)
   appendKpiStrip_(body, [
     { label: 'PRESENT', value: fmtRate_(scores.presentRate) },
     { label: 'LATE', value: fmtRate_(scores.lateRate) },
     { label: 'ABSENT', value: fmtRate_(scores.absentRate) },
-    { label: 'LAST SYNC', value: String(scores.lastSync || 'Not synced') }
+    { label: 'LAST SYNC', value: String(scores.lastSync || '—') }
   ]);
   body.appendParagraph('Attendance mix (Present · Late · Absent)')
-    .setFontSize(8).setForegroundColor('#71757D').setSpacingBefore(4);
+    .setFontSize(7).setForegroundColor('#6B6570').setSpacingBefore(4);
   appendAttendanceMixBar_(body, scores);
 
-  // Ratings — compact bars/chips (not heavy section banners)
+  // Rating meters — 5-cell blocks (filled magenta/cyan vs empty grey)
   body.appendParagraph('');
   sectionHeading_(body, 'Performance ratings', WAAD_CYAN);
   body.appendParagraph('Scale: 1 = needs support · 5 = excellent / exemplary punctuality')
-    .setFontSize(8).setForegroundColor('#71757D');
-  appendRatingBar_(body, 'Classroom management', scores.classroom || 3);
-  appendRatingBar_(body, 'Between-class tardiness', scores.betweenClass || 3);
-  appendRatingBar_(body, 'Duty tardiness', scores.duty || 3);
+    .setFontSize(8).setForegroundColor('#6B6570');
+  appendRatingBar_(body, 'Classroom', scores.classroom || 3);
+  appendRatingBar_(body, 'Between-class', scores.betweenClass || 3);
+  appendRatingBar_(body, 'Duty', scores.duty || 3);
 
   // Short pointers only — Chronological Log is SoT (keep numbered headings for extract/restore)
   sectionHeading_(body, '6. Achievements', WAAD_CYAN);
@@ -1477,21 +1575,21 @@ function buildTeacherReportBody_(body, meta, scores) {
   sectionHeading_(body, '9. Issues', WAAD_ORANGE);
   body.appendParagraph('—').setForegroundColor('#888888').setFontSize(9);
 
-  sectionHeading_(body, '10. Chronological log', WAAD_NAVY);
-  body.appendParagraph('Single source of truth for notes, ratings context, and HR actions')
-    .setFontSize(8).setForegroundColor('#71757D').setSpacingAfter(2);
+  sectionHeading_(body, '10. Chronological log', WAAD_CHARCOAL);
+  body.appendParagraph('Timeline SoT — narrow date + narrative note · HR English only')
+    .setFontSize(8).setForegroundColor('#6B6570').setSpacingAfter(2);
   var log = body.appendTable([
     ['Date', 'Type', 'Note', 'Recorded by']
   ]);
-  styleIncidentsTableHeader_(log);
+  styleTimelineTableHeader_(log);
   try {
-    log.setColumnWidth(0, 80);
-    log.setColumnWidth(1, 90);
-    log.setColumnWidth(2, 250);
-    log.setColumnWidth(3, 100);
+    log.setColumnWidth(0, 72);   // narrow date
+    log.setColumnWidth(1, 72);
+    log.setColumnWidth(2, 276);
+    log.setColumnWidth(3, 90);
   } catch (eL) {}
 
-  appendConfidentialFooter_(body, 'Staff HR professional record · Adults only · Ops confidential');
+  appendConfidentialFooter_(body, 'Staff performance dossier · Adults only · Ops confidential');
 }
 
 
@@ -1507,51 +1605,49 @@ function sectionHeading_(body, text, accent) {
   var bar = body.appendTable([[' ', text]]);
   bar.setBorderWidth(0);
   try {
-    bar.setColumnWidth(0, 4);
-    bar.setColumnWidth(1, 486);
+    bar.setColumnWidth(0, 5);
+    bar.setColumnWidth(1, 505);
   } catch (eW) {}
   bar.getCell(0, 0).setBackgroundColor(accent || WAAD_CYAN);
-  bar.getCell(0, 1).setBackgroundColor('#FFFFFF')
-    .editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(11);
-  appendAccentRule_(body, accent || WAAD_CYAN);
+  bar.getCell(0, 1).setBackgroundColor(WAAD_PAGE_BG)
+    .editAsText().setBold(true).setForegroundColor(WAAD_CHARCOAL).setFontSize(11);
 }
 
 function styleMetaTable_(table) {
   table.setBorderColor(WAAD_LINE);
-  table.setBorderWidth(0.5);
+  table.setBorderWidth(0.4);
   for (var r = 0; r < table.getNumRows(); r++) {
     for (var c = 0; c < table.getRow(r).getNumCells(); c += 2) {
       table.getCell(r, c).setBackgroundColor(WAAD_PAGE_BG)
-        .editAsText().setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(10);
+        .editAsText().setBold(true).setForegroundColor(WAAD_CHARCOAL).setFontSize(10);
       if (c + 1 < table.getRow(r).getNumCells()) {
         table.getCell(r, c + 1).setBackgroundColor('#FFFFFF')
-          .editAsText().setFontSize(10).setForegroundColor('#222222');
+          .editAsText().setFontSize(10).setForegroundColor(WAAD_CHARCOAL);
       }
     }
   }
 }
 
-/** 5-cell rating bar: filled navy/cyan up to score, digit labels. */
+/** 5-cell rating meter: filled magenta/cyan vs empty grey (NOT old slider copy). */
 function appendRatingBar_(body, label, score) {
   var s = Math.max(1, Math.min(5, Number(score) || 3));
-  body.appendParagraph(label + ': ' + s + ' / 5')
-    .setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(10);
+  body.appendParagraph(label + '  ·  ' + s + ' / 5')
+    .setBold(true).setForegroundColor(WAAD_CHARCOAL).setFontSize(10).setSpacingBefore(4);
   var cells = [];
-  for (var i = 1; i <= 5; i++) cells.push(String(i));
+  for (var i = 1; i <= 5; i++) cells.push(' ');
   var t = body.appendTable([cells]);
-  t.setBorderWidth(0.5);
-  t.setBorderColor(WAAD_LINE);
+  t.setBorderWidth(0);
   for (var c = 0; c < 5; c++) {
     var cell = t.getCell(0, c);
     if (c < s) {
-      // filled cells pale cyan; tip cell cyan chip
-      cell.setBackgroundColor(c === s - 1 ? WAAD_CYAN : WAAD_HEADER_ROW);
-      cell.editAsText().setForegroundColor(WAAD_NAVY).setBold(true).setFontSize(11);
+      // alternate filled magenta / cyan blocks
+      cell.setBackgroundColor(c % 2 === 0 ? WAAD_MAGENTA : WAAD_CYAN);
+      cell.editAsText().setForegroundColor('#FFFFFF').setBold(true).setFontSize(8).setText(String(c + 1));
     } else {
-      cell.setBackgroundColor('#FFFFFF');
-      cell.editAsText().setForegroundColor('#9AA0B8').setFontSize(11);
+      cell.setBackgroundColor(WAAD_EMPTY_METER);
+      cell.editAsText().setForegroundColor('#8A847A').setFontSize(8).setText(String(c + 1));
     }
-    try { t.setColumnWidth(c, 48); } catch (e) {}
+    try { t.setColumnWidth(c, 40); } catch (e) {}
   }
 }
 
@@ -1617,11 +1713,11 @@ function appendAttendanceMixBar_(body, scores) {
   for (var c = 0; c < cells.length; c++) {
     var cell = t.getCell(0, c);
     var kind = labels[c];
-    if (kind === 'present') cell.setBackgroundColor('#81D4FA');
-    else if (kind === 'late') cell.setBackgroundColor('#81D4FA');
-    else if (kind === 'absent') cell.setBackgroundColor('#F48FB1');
-    else cell.setBackgroundColor('#EEEEEE');
-    cell.editAsText().setForegroundColor(WAAD_NAVY).setFontSize(6);
+    if (kind === 'present') cell.setBackgroundColor(WAAD_CYAN);
+    else if (kind === 'late') cell.setBackgroundColor(WAAD_ORANGE);
+    else if (kind === 'absent') cell.setBackgroundColor(WAAD_MAGENTA);
+    else cell.setBackgroundColor(WAAD_EMPTY_METER);
+    cell.editAsText().setForegroundColor('#FFFFFF').setFontSize(6);
     try { t.setColumnWidth(c, 28); } catch (e2) {}
   }
 }
@@ -2701,19 +2797,19 @@ function writeHealthSnapshotDoc_(student, rec) {
   } catch (eM) {}
 
   insertBrandedHeaderImage_(body, 'student');
-  appendAccentRule_(body, WAAD_CYAN);
+  appendCyanLeftRail_(body);
   appendExecutiveCoverTitle_(
     body,
-    'HEALTH OPERATIONAL SNAPSHOT',
+    'STUDENT PASTORAL DOSSIER · HEALTH SNAPSHOT',
     studentName,
     'Waad Academy · Boys School · Ops use only · No ages recorded'
   );
 
-  appendProfileMetaStrip_(body, [
-    { label: 'WA ID', value: studentId },
-    { label: 'Grade', value: grade || '—' },
-    { label: 'Section', value: section || '—' },
-    { label: 'Snapshot', value: Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd') }
+  appendCaseMetaRow_(body, [
+    { label: 'FILE NO.', value: studentId },
+    { label: 'CAMPUS', value: 'Boys · Jeddah' },
+    { label: 'GRADE', value: (grade || '—') + (section ? ' · ' + section : '') },
+    { label: 'SNAPSHOT', value: Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd'), chip: 'orange' }
   ]);
 
   body.appendParagraph('').setSpacingAfter(2);
@@ -2741,8 +2837,8 @@ function writeHealthSnapshotDoc_(student, rec) {
 
   body.appendParagraph('');
   body.appendParagraph('Operational details (condensed — not a full medical file)')
-    .setBold(true).setForegroundColor(WAAD_NAVY).setFontSize(11);
-  appendAccentRule_(body, WAAD_CYAN);
+    .setBold(true).setForegroundColor(WAAD_CHARCOAL).setFontSize(11);
+  appendCyanLeftRail_(body);
   var detailTable = body.appendTable([
     ['Item', 'Operational note'],
     ['Condition / status', condition === '—' && rec.summary ? String(rec.summary).slice(0, 280) : condition],
@@ -2773,16 +2869,16 @@ function writeHealthSnapshotDoc_(student, rec) {
 
 function styleInfoTable_(table) {
   table.setBorderColor(WAAD_LINE);
-  table.setBorderWidth(0.5);
+  table.setBorderWidth(0.4);
   for (var r = 0; r < table.getNumRows(); r++) {
     for (var c = 0; c < table.getRow(r).getNumCells(); c++) {
       var cell = table.getCell(r, c);
       if (c % 2 === 0) {
         cell.setBackgroundColor(WAAD_PAGE_BG);
-        cell.editAsText().setForegroundColor(WAAD_NAVY).setBold(true);
+        cell.editAsText().setForegroundColor(WAAD_CHARCOAL).setBold(true);
       } else {
         cell.setBackgroundColor('#FFFFFF');
-        cell.editAsText().setForegroundColor('#222222');
+        cell.editAsText().setForegroundColor(WAAD_CHARCOAL);
       }
     }
   }
@@ -2791,8 +2887,8 @@ function styleInfoTable_(table) {
 function styleIncidentTableHeaderLike_(table) {
   var header = table.getRow(0);
   for (var c = 0; c < header.getNumCells(); c++) {
-    header.getCell(c).setBackgroundColor(WAAD_HEADER_ROW);
-    header.getCell(c).editAsText().setForegroundColor(WAAD_NAVY).setBold(true);
+    header.getCell(c).setBackgroundColor(WAAD_PAGE_BG);
+    header.getCell(c).editAsText().setForegroundColor(WAAD_CHARCOAL).setBold(true);
   }
   table.setBorderColor(WAAD_LINE);
   for (var r = 1; r < table.getNumRows(); r++) {
