@@ -45,8 +45,10 @@ async function syncQuiet(reason) {
   if (syncing) return;
   syncing = true;
   try {
-    await uploadAllNow();
-    if (reason) toast(`${t('synced')}`);
+    // Automatic: only unsent changes go up; an untouched/empty day is never uploaded.
+    const res = await uploadAllNow();
+    const sent = (res.att || []).some((r) => r && !r.skipped) || (res.beh && !res.beh.skipped);
+    if (reason && sent) toast(`${t('synced')}`);
   } catch (e) {
     if (reason) toast(e.message || t('syncFailed'));
   } finally {

@@ -42,7 +42,34 @@ var GRADE_FOLDERS = {
   '5': '1WDlV72hGVNvkz54dR7qRqvx7QJGh8VgY',
   '6': '1acbUOKZO8A_U4fAYXFjGA7b6Qzi9XcFu'
 };
-var TOKEN = 'r-M-LW1rIuLxESItwMg10v13SYr0P7aH';
+/**
+ * Webhook token lives in Script Properties (Project Settings → Script properties),
+ * key UPLOAD_TOKEN. It is NOT stored in code. The PWA gets the same value at build
+ * time from the GitHub Actions secret VITE_DRIVE_UPLOAD_TOKEN.
+ */
+function getUploadToken_() {
+  try {
+    return String(PropertiesService.getScriptProperties().getProperty('UPLOAD_TOKEN') || '');
+  } catch (e) {
+    return '';
+  }
+}
+
+/** Constant-time-ish compare; false when the server token is not configured. */
+function uploadTokenMatches_(given) {
+  var expected = getUploadToken_();
+  given = String(given == null ? '' : given);
+  if (!expected || !given || expected.length !== given.length) return false;
+  var diff = 0;
+  for (var i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ given.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Run manually from the editor to confirm the property is set (never logs the value). */
+function checkUploadTokenConfigured() {
+  var t = getUploadToken_();
+  Logger.log(t ? ('UPLOAD_TOKEN is set (' + t.length + ' chars).') : 'UPLOAD_TOKEN is NOT set — add it under Project Settings → Script properties.');
+}
 
 /**
  * MINIMAL real campus header strips (Jeddah Al Sawari — YASchools gallery school 352).
@@ -297,8 +324,8 @@ function doPost(e) {
     if (e.postData && e.postData.contents) {
       body = JSON.parse(e.postData.contents);
     }
-    if (body.token !== TOKEN) {
-      return json_({ ok: false, error: 'unauthorized' });
+    if (!uploadTokenMatches_(body.token)) {
+      return json_({ ok: false, error: getUploadToken_() ? 'unauthorized' : 'unauthorized (server token not configured)' });
     }
     var kind = body.kind || 'attendance';
 
@@ -362,6 +389,11 @@ function doPost(e) {
     } else if (kind === 'export') {
       folderId = APP_EXPORTS;
     }
+    if (folderId === DAILY_CSV &&
+        (/^assembly-attendance-/i.test(name) || /^Assembly Attendance/i.test(name))) {
+      // Attendance files may only change through the merge path — never a raw overwrite.
+      return json_(handleAttendance_(body));
+    }
     var folder = DriveApp.getFolderById(folderId);
     var files = folder.getFilesByName(name);
     var file;
@@ -389,7 +421,8 @@ function doGet() {
     upgradeTeacherDocs: true,
     driveSearch: true,
     healthSnapshots: true,
-    listFolder: true
+    listFolder: true,
+    attendanceMerge: 2
   });
 }
 
@@ -1410,44 +1443,360 @@ function guessMetaFromTitle_(title, which) {
   return '';
 }
 
-/* ═══════════════════ Attendance sheet (premium) ═══════════════════ */
+/* ═══════════════════ Attendance sheet (premium) — SAFE MERGE ═══════════════════
+ * Sep 2026 fix: syncs from a phone/session with no marks used to overwrite the
+ * day's CSV + Sheet with a blank roster (wiped 20/21/22 Sep and 29 Sep 08:19).
+ * Rules now enforced here, whatever the client sends:
+ *   1. Incoming marks are MERGED per staff ID into the existing day's data.
+ *   2. Per person, the mark with the LATEST timestamp wins.
+ *   3. A blank status NEVER overwrites a non-blank one.
+ *   4. An upload with zero marks is rejected (nothing written, no file created).
+ *   5. An upload that would reduce the day's marked count is rejected.
+ *   6. Weekend dates (Fri/Sat) are rejected unless body.allowWeekend === true.
+ *   7. Every received mark is appended to an append-only log sheet in the
+ *      "_backup" subfolder, and the first time a day is touched by this code its
+ *      original CSV is copied into "_backup" — so data can always be recovered.
+ */
+var ATTENDANCE_BACKUP_FOLDER_NAME = '_backup';
+var ATTENDANCE_LOG_TITLE = '_Attendance Mark Log';
+var ATTENDANCE_LOG_HEADERS = ['ReceivedAt', 'Date', 'ID', 'Name', 'Status', 'MarkedAt', 'Result', 'Schema', 'Note'];
+/** Tolerate small device clock skew; anything further in the future is clamped to receipt time. */
+var ATTENDANCE_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+/** Folder that holds the day files. Script Property DAILY_CSV_FOLDER_ID overrides (used for scratch tests). */
+function attendanceFolderId_() {
+  try {
+    var p = PropertiesService.getScriptProperties().getProperty('DAILY_CSV_FOLDER_ID');
+    if (p) return p;
+  } catch (e) {}
+  return DAILY_CSV;
+}
+
+function isWeekendDate_(date) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
+  if (!m) return false;
+  var dow = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+  return dow === 5 || dow === 6; // Friday, Saturday (Saudi weekend)
+}
+
+function attStatusBlank_(s) {
+  return String(s == null ? '' : s).trim() === '';
+}
+
+function attNormName_(s) {
+  return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function attTsMs_(iso) {
+  if (!iso) return 0;
+  var t = Date.parse(iso);
+  return isNaN(t) ? 0 : t;
+}
+
+function countMarkedRows_(rows) {
+  var n = 0;
+  for (var i = 0; i < (rows || []).length; i++) {
+    if (!attStatusBlank_(rows[i].status)) n++;
+  }
+  return n;
+}
+
+/**
+ * Normalise whatever the client sent into [{id,name,role,grade,status,markedAt}].
+ * schema 2 (fixed PWA): body.marks = only marked people, each with markedAt.
+ * legacy (old PWA / CSV): body.rows or body.content; marks get receipt time.
+ */
+function normalizeIncomingMarks_(body, receivedAtIso) {
+  var receivedMs = attTsMs_(receivedAtIso);
+  var list = [];
+  var src = null;
+  if (Object.prototype.toString.call(body.marks) === '[object Array]') {
+    src = body.marks;
+  } else if (Object.prototype.toString.call(body.rows) === '[object Array]') {
+    src = body.rows;
+  } else if (body.content) {
+    src = parseAttendanceCsv_(body.content);
+  } else {
+    src = [];
+  }
+  var legacy = !(Object.prototype.toString.call(body.marks) === '[object Array]');
+  // Roster rows from schema 2 (for names/order of unmarked people) — statuses there are ignored.
+  var rosterRows = (!legacy && Object.prototype.toString.call(body.rows) === '[object Array]') ? body.rows : [];
+
+  for (var i = 0; i < src.length; i++) {
+    var r = src[i] || {};
+    var status = String(r.status == null ? '' : r.status).trim();
+    var ts = r.markedAt || r.timestamp || '';
+    var ms = attTsMs_(ts);
+    if (!status) {
+      ts = '';
+    } else if (!ms || legacy && !r.markedAt) {
+      ts = receivedAtIso;
+    } else if (ms > receivedMs + ATTENDANCE_FUTURE_SKEW_MS) {
+      ts = receivedAtIso; // device clock far in the future — do not let it win forever
+    } else {
+      ts = new Date(ms).toISOString();
+    }
+    list.push({
+      id: String(r.id || '').trim(),
+      name: String(r.name || r.staff || '').trim(),
+      role: String(r.role || '').trim(),
+      grade: String(r.grade || '').trim(),
+      status: status,
+      markedAt: ts
+    });
+  }
+  for (var j = 0; j < rosterRows.length; j++) {
+    var rr = rosterRows[j] || {};
+    list.push({
+      id: String(rr.id || '').trim(),
+      name: String(rr.name || '').trim(),
+      role: String(rr.role || '').trim(),
+      grade: String(rr.grade || '').trim(),
+      status: '',
+      markedAt: ''
+    });
+  }
+  return list;
+}
+
+/**
+ * Pure merge. existing/incoming: [{id,name,role,grade,status,markedAt}].
+ * Returns { rows, applied: [...incoming marks that changed data], ignored: [...] }.
+ */
+function mergeAttendanceRows_(existing, incoming) {
+  var out = [];
+  var byId = {};
+  var byName = {};
+  function index(row, pos) {
+    if (row.id) byId[row.id] = pos;
+    var nn = attNormName_(row.name);
+    if (nn && byName[nn] == null) byName[nn] = pos;
+  }
+  for (var i = 0; i < (existing || []).length; i++) {
+    var e = existing[i] || {};
+    var copy = {
+      id: String(e.id || '').trim(),
+      name: String(e.name || e.staff || '').trim(),
+      role: String(e.role || '').trim(),
+      grade: String(e.grade || '').trim(),
+      status: String(e.status == null ? '' : e.status).trim(),
+      markedAt: String(e.markedAt || '').trim()
+    };
+    out.push(copy);
+    index(copy, out.length - 1);
+  }
+  var applied = [];
+  var ignored = [];
+  for (var k = 0; k < (incoming || []).length; k++) {
+    var inc = incoming[k];
+    var pos = null;
+    if (inc.id && byId[inc.id] != null) pos = byId[inc.id];
+    else if (attNormName_(inc.name) && byName[attNormName_(inc.name)] != null) pos = byName[attNormName_(inc.name)];
+
+    if (pos == null) {
+      out.push({
+        id: inc.id, name: inc.name, role: inc.role, grade: inc.grade,
+        status: inc.status, markedAt: inc.status ? inc.markedAt : ''
+      });
+      index(out[out.length - 1], out.length - 1);
+      if (inc.status) applied.push(inc);
+      continue;
+    }
+    var cur = out[pos];
+    // Fill missing identity fields, never clobber existing ones.
+    if (!cur.id && inc.id) { cur.id = inc.id; byId[inc.id] = pos; }
+    if (!cur.name && inc.name) cur.name = inc.name;
+    if (!cur.role && inc.role) cur.role = inc.role;
+    if (!cur.grade && inc.grade) cur.grade = inc.grade;
+
+    if (attStatusBlank_(inc.status)) continue; // rule 3: blank never overwrites
+    if (attStatusBlank_(cur.status)) {
+      cur.status = inc.status;
+      cur.markedAt = inc.markedAt;
+      applied.push(inc);
+      continue;
+    }
+    if (attTsMs_(inc.markedAt) >= attTsMs_(cur.markedAt)) { // rule 2: latest wins
+      if (cur.status !== inc.status || cur.markedAt !== inc.markedAt) applied.push(inc);
+      cur.status = inc.status;
+      cur.markedAt = inc.markedAt;
+    } else {
+      ignored.push(inc);
+    }
+  }
+  return { rows: out, applied: applied, ignored: ignored };
+}
+
+/** Read the existing day's data: canonical CSV first, else the day's Sheet. */
+function readExistingAttendance_(folder, date) {
+  var csvName = 'assembly-attendance-' + date + '.csv';
+  var it = folder.getFilesByName(csvName);
+  if (it.hasNext()) {
+    var f = it.next();
+    var text = f.getBlob().getDataAsString();
+    return { file: f, content: text, rows: parseAttendanceCsv_(text), source: 'csv' };
+  }
+  var sheetTitle = 'Assembly Attendance — ' + date;
+  var sit = folder.getFilesByName(sheetTitle);
+  while (sit.hasNext()) {
+    var sf = sit.next();
+    if (sf.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
+    try {
+      var data = SpreadsheetApp.openById(sf.getId()).getSheets()[0].getDataRange().getValues();
+      var hdr = -1, cName = -1, cRole = -1, cStatus = -1;
+      for (var r = 0; r < Math.min(10, data.length); r++) {
+        var hs = data[r].map(function (h) { return String(h).toLowerCase().trim(); });
+        if (hs.indexOf('staff') >= 0 && hs.indexOf('status') >= 0) {
+          hdr = r; cName = hs.indexOf('staff'); cRole = hs.indexOf('role'); cStatus = hs.indexOf('status');
+          break;
+        }
+      }
+      var rows = [];
+      if (hdr >= 0) {
+        for (var i = hdr + 1; i < data.length; i++) {
+          var nm = String(data[i][cName] || '').trim();
+          if (!nm) continue;
+          rows.push({ id: '', name: nm, role: cRole >= 0 ? String(data[i][cRole] || '') : '',
+            status: denormalizeStatus_(data[i][cStatus]), markedAt: '' });
+        }
+      }
+      return { file: null, content: '', rows: rows, source: 'sheet' };
+    } catch (eS) {}
+  }
+  return { file: null, content: '', rows: [], source: 'none' };
+}
+
+/** "On time"/"Present" etc. → PWA keys; unknown strings are kept as-is. */
+function denormalizeStatus_(s) {
+  var v = String(s == null ? '' : s).trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!v) return '';
+  if (v === 'on_time' || v === 'present' || v === 'p') return 'on_time';
+  if (v === 'late' || v === 'l') return 'late';
+  if (v === 'absent' || v === 'a') return 'absent';
+  return String(s).trim();
+}
+
+function getAttendanceBackupFolder_(folder) {
+  return findOrCreateFolder_(folder, ATTENDANCE_BACKUP_FOLDER_NAME);
+}
+
+/** Append-only log of every received mark (never cleared by code). */
+function appendAttendanceLog_(backupFolder, date, incoming, appliedList, receivedAt, schema, note) {
+  var marked = incoming.filter(function (m) { return !attStatusBlank_(m.status); });
+  if (!marked.length) return;
+  var appliedKeys = {};
+  appliedList.forEach(function (a) { appliedKeys[(a.id || a.name) + '|' + a.markedAt + '|' + a.status] = true; });
+  var ss = findOrCreateSpreadsheet_(backupFolder, ATTENDANCE_LOG_TITLE);
+  var sh = ss.getSheets()[0];
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, ATTENDANCE_LOG_HEADERS.length).setValues([ATTENDANCE_LOG_HEADERS]);
+    try { sh.setFrozenRows(1); } catch (eF) {}
+  }
+  var values = marked.map(function (m) {
+    return [receivedAt, date, m.id, m.name, m.status, m.markedAt,
+      appliedKeys[(m.id || m.name) + '|' + m.markedAt + '|' + m.status] ? 'applied' : 'kept-newer',
+      String(schema || 'legacy'), note || ''];
+  });
+  sh.getRange(sh.getLastRow() + 1, 1, values.length, ATTENDANCE_LOG_HEADERS.length).setValues(values);
+}
+
+/** First time the merge code touches a day, keep a verbatim copy of the original CSV. */
+function snapshotOriginalCsvOnce_(backupFolder, date, existing) {
+  if (!existing.file || !existing.content) return;
+  var snapName = 'assembly-attendance-' + date + '__original-before-merge.csv';
+  if (backupFolder.getFilesByName(snapName).hasNext()) return;
+  backupFolder.createFile(snapName, existing.content, 'text/csv');
+}
 
 function handleAttendance_(body) {
-  var date = body.date || Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd');
-  var rows = body.rows || null;
-  if (!rows && body.content) {
-    rows = parseAttendanceCsv_(body.content);
+  var date = String(body.date || Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd'));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { ok: false, rejected: true, reason: 'invalid-date', error: 'Invalid date' };
   }
-  if (!rows) rows = [];
-
-  var sheetName = 'Assembly Attendance — ' + date;
-  var folder = DriveApp.getFolderById(DAILY_CSV);
-  var ss = findOrCreateSpreadsheet_(folder, sheetName);
-  formatAttendanceSheet_(ss, date, rows);
-
-  var csvName = body.name || ('assembly-attendance-' + date + '.csv');
-  var csvContent = body.content || rowsToCsv_(date, rows);
-  var csvFiles = folder.getFilesByName(csvName);
-  var csvFile;
-  if (csvFiles.hasNext()) {
-    csvFile = csvFiles.next();
-    csvFile.setContent(csvContent);
-  } else {
-    csvFile = folder.createFile(csvName, csvContent, 'text/csv');
+  if (isWeekendDate_(date) && body.allowWeekend !== true) {
+    return { ok: false, rejected: true, reason: 'weekend', date: date,
+      error: 'Weekend (Fri/Sat) — attendance not written' };
+  }
+  var receivedAt = new Date().toISOString();
+  var incoming = normalizeIncomingMarks_(body, receivedAt);
+  var incomingMarked = countMarkedRows_(incoming);
+  if (incomingMarked === 0) {
+    // Rule 4: never create or touch a day file from an empty upload.
+    return { ok: false, rejected: true, reason: 'no-marks', date: date,
+      error: 'Upload has no marks — nothing written' };
   }
 
-  return {
-    ok: true,
-    kind: 'attendance',
-    date: date,
-    spreadsheetId: ss.getId(),
-    spreadsheetUrl: ss.getUrl(),
-    fileId: ss.getId(),
-    csvFileId: csvFile.getId(),
-    name: sheetName,
-    folderId: DAILY_CSV,
-    rowCount: rows.length
-  };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var folderId = attendanceFolderId_();
+    var folder = DriveApp.getFolderById(folderId);
+    var existing = readExistingAttendance_(folder, date);
+    var existingMarked = countMarkedRows_(existing.rows);
+    var merge = mergeAttendanceRows_(existing.rows, incoming);
+    var mergedMarked = countMarkedRows_(merge.rows);
+
+    var backupFolder = getAttendanceBackupFolder_(folder);
+    var schema = body.schema || 'legacy';
+
+    if (mergedMarked === 0 || mergedMarked < existingMarked) {
+      appendAttendanceLog_(backupFolder, date, incoming, [], receivedAt, schema, 'REJECTED would-reduce-marks');
+      return { ok: false, rejected: true, reason: 'would-reduce-marks', date: date,
+        existingMarked: existingMarked, mergedMarked: mergedMarked,
+        error: 'Upload would reduce marked count — rejected' };
+    }
+
+    snapshotOriginalCsvOnce_(backupFolder, date, existing);
+    appendAttendanceLog_(backupFolder, date, incoming, merge.applied, receivedAt, schema, '');
+
+    var csvName = 'assembly-attendance-' + date + '.csv';
+    var csvContent = attendanceRowsToCanonicalCsv_(date, merge.rows);
+    var csvFile = existing.file;
+    if (csvFile) csvFile.setContent(csvContent);
+    else csvFile = folder.createFile(csvName, csvContent, 'text/csv');
+
+    var sheetName = 'Assembly Attendance — ' + date;
+    var ss = findOrCreateSpreadsheet_(folder, sheetName);
+    formatAttendanceSheet_(ss, date, merge.rows.map(function (r) {
+      return {
+        name: r.name, role: r.role, status: r.status, grade: r.grade,
+        time: r.markedAt && r.status ? Utilities.formatDate(new Date(attTsMs_(r.markedAt)), 'Asia/Riyadh', 'HH:mm') : ''
+      };
+    }));
+
+    return {
+      ok: true,
+      kind: 'attendance',
+      date: date,
+      merged: true,
+      spreadsheetId: ss.getId(),
+      spreadsheetUrl: ss.getUrl(),
+      fileId: ss.getId(),
+      csvFileId: csvFile.getId(),
+      name: sheetName,
+      folderId: folderId,
+      rowCount: merge.rows.length,
+      existingMarked: existingMarked,
+      incomingMarked: incomingMarked,
+      mergedMarked: mergedMarked,
+      applied: merge.applied.length,
+      keptNewer: merge.ignored.length
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Canonical day CSV (keeps staff ID + per-mark timestamp so later merges are exact). */
+function attendanceRowsToCanonicalCsv_(date, rows) {
+  var lines = ['Date,ID,Name,Role,Grade,Status,MarkedAt'];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    lines.push([date, r.id, r.name, r.role, r.grade, r.status, r.status ? r.markedAt : '']
+      .map(csvEsc_).join(','));
+  }
+  return '\uFEFF' + lines.join('\r\n');
 }
 
 function findOrCreateSpreadsheet_(folder, title) {
@@ -1520,19 +1869,21 @@ function formatAttendanceSheet_(ss, date, rows) {
   // Row 4: KPI summary (filled after counts)
   var present = 0, late = 0, absent = 0, other = 0;
   for (var k = 0; k < rows.length; k++) {
-    var st = String(rows[k].status || '').toLowerCase();
-    if (st === 'present' || st === 'p') present++;
+    var st = String(rows[k].status || '').toLowerCase().replace(/[\s-]+/g, '_');
+    if (st === 'present' || st === 'p' || st === 'on_time') present++;
     else if (st === 'late' || st === 'l') late++;
     else if (st === 'absent' || st === 'a') absent++;
-    else other++;
+    else if (st) other++; // blank = unmarked, counted below
   }
   var total = rows.length;
+  var unmarked = total - present - late - absent - other;
   sh.getRange(4, 1, 1, 6).merge()
     .setValue(
       'KPI  ·  Present: ' + present +
       '   Late: ' + late +
       '   Absent: ' + absent +
       (other ? ('   Other: ' + other) : '') +
+      (unmarked ? ('   Unmarked: ' + unmarked) : '') +
       '   ·  Headcount: ' + total
     )
     .setBackground('#FFFFFF')
@@ -1573,7 +1924,7 @@ function formatAttendanceSheet_(ss, date, rows) {
     for (var i = 0; i < values.length; i++) {
       var status = String(values[i][3] || '').toLowerCase();
       var bg = null;
-      if (status === 'present') bg = COLOR_PRESENT;
+      if (status === 'present' || status === 'on time') bg = COLOR_PRESENT;
       else if (status === 'late') bg = COLOR_LATE;
       else if (status === 'absent') bg = COLOR_ABSENT;
       if (bg) {
@@ -1591,6 +1942,8 @@ function formatAttendanceSheet_(ss, date, rows) {
     var rules = [
       SpreadsheetApp.newConditionalFormatRule()
         .whenTextEqualTo('Present').setBackground(COLOR_PRESENT).setRanges([statusRange]).build(),
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo('On time').setBackground(COLOR_PRESENT).setRanges([statusRange]).build(),
       SpreadsheetApp.newConditionalFormatRule()
         .whenTextEqualTo('Late').setBackground(COLOR_LATE).setRanges([statusRange]).build(),
       SpreadsheetApp.newConditionalFormatRule()
@@ -1619,6 +1972,7 @@ function formatAttendanceSheet_(ss, date, rows) {
 
 function normalizeStatusLabel_(s) {
   var v = String(s || '').trim().toLowerCase();
+  if (v === 'on_time' || v === 'on time' || v === 'on-time') return 'On time';
   if (v === 'p' || v === 'present') return 'Present';
   if (v === 'l' || v === 'late') return 'Late';
   if (v === 'a' || v === 'absent') return 'Absent';
@@ -1640,17 +1994,20 @@ function parseAttendanceCsv_(text) {
     if (header.indexOf('staff') >= 0 || header.indexOf('#') >= 0) {
       row.name = cols[header.indexOf('staff') >= 0 ? header.indexOf('staff') : 1] || cols[1] || '';
       row.role = cols[header.indexOf('role') >= 0 ? header.indexOf('role') : 2] || '';
-      row.status = cols[header.indexOf('status') >= 0 ? header.indexOf('status') : 3] || '';
+      row.status = denormalizeStatus_(cols[header.indexOf('status') >= 0 ? header.indexOf('status') : 3] || '');
       row.time = cols[header.indexOf('time') >= 0 ? header.indexOf('time') : 4] || '';
       row.notes = cols[header.indexOf('notes') >= 0 ? header.indexOf('notes') : 5] || '';
     } else {
-      row.date = cols[0] || '';
-      row.id = cols[1] || '';
-      row.name = cols[2] || '';
-      row.role = cols[3] || '';
-      row.grade = cols[4] || '';
-      row.status = cols[5] || '';
-      row.notes = cols[4] || '';
+      var hi = function (h, dflt) { var ix = header.indexOf(h); return ix >= 0 ? ix : dflt; };
+      row.date = cols[hi('date', 0)] || '';
+      row.id = cols[hi('id', 1)] || '';
+      row.name = cols[hi('name', 2)] || '';
+      row.role = cols[hi('role', 3)] || '';
+      row.grade = cols[hi('grade', 4)] || '';
+      row.status = cols[hi('status', 5)] || '';
+      row.notes = row.grade;
+      var mi = header.indexOf('markedat');
+      row.markedAt = mi >= 0 ? (cols[mi] || '') : '';
     }
     out.push(row);
   }
@@ -2507,7 +2864,7 @@ function handleTeacherAttendanceSync_(body) {
 /** Pull this staff member's Present/Late/Absent counts from Assembly Attendance sheet for date. */
 function computeTeacherAttendanceFromSheet_(teacherName, date) {
   try {
-    var folder = DriveApp.getFolderById(DAILY_CSV);
+    var folder = DriveApp.getFolderById(attendanceFolderId_());
     var title = 'Assembly Attendance — ' + date;
     var it = folder.getFilesByName(title);
     var file = null;
@@ -2540,7 +2897,7 @@ function computeTeacherAttendanceFromSheet_(teacherName, date) {
       if (name.indexOf(target) < 0 && target.indexOf(name) < 0) continue;
       total++;
       var st = String(data[i][colStatus] || '').toLowerCase();
-      if (st === 'present' || st === 'p') p++;
+      if (st === 'present' || st === 'p' || st === 'on time' || st === 'on_time') p++;
       else if (st === 'late' || st === 'l') l++;
       else if (st === 'absent' || st === 'a') a++;
     }

@@ -35,3 +35,8 @@ Open preview URL → Unlock this device → mark attendance → Export CSV → B
 
 ## 2026-09-19 — Stats dashboard reports
 Body-first HUD Docs (charts/meters/Venn). Real Jeddah campus header strips. Commit `a42c6ae`. Parent must redeploy Apps Script; samples Yahya + Nihma.
+
+## 2026-09-29 — Attendance sync can no longer wipe marks
+Dirty-flag, per-mark timestamps, no weekend / zero-mark uploads (PWA); merge + latest-wins +
+reject-empty + `_backup` log (Apps Script); token moved to Script Properties / build secret.
+See [`docs/ATTENDANCE_SYNC_FIX.md`](docs/ATTENDANCE_SYNC_FIX.md). `npm test` covers it.
