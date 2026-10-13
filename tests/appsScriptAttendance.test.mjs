@@ -186,3 +186,37 @@ test('pure merge: blank never overwrites, unknown people appended', () => {
   assert.equal(out.rows[1].status, 'absent');
   assert.equal(out.applied.length, 1);
 });
+
+// ── Oct 2026: blank CSV must not hide real statuses that live only in the Sheet ──
+function sheetStatuses(g, date = DAY) {
+  const f = g.scratch.childFiles.find((x) => x.name === `Assembly Attendance — ${date}` && !x.trashed);
+  const grid = g.spreadsheets.get(f.id).getSheets()[0].getDataRange().getValues();
+  const h = grid.findIndex((r) => r.map(String).includes('Staff'));
+  return Object.fromEntries(grid.slice(h + 1).filter((r) => r[1]).map((r) => [r[1], String(r[3])]));
+}
+
+test('blank CSV + recovered Sheet: a new mark keeps every Sheet status', () => {
+  const g = makeFakeGas({ scriptProps: { UPLOAD_TOKEN: TOKEN } });
+  // Day file pair as left by the old wipe + manual recovery: CSV blank, Sheet restored.
+  let r = post(g, v2({ t01: ['on_time', '2026-09-29T04:50:00Z'], t02: ['late', '2026-09-29T04:51:00Z'],
+    t03: ['absent', '2026-09-29T04:52:00Z'] }));
+  assert.equal(r.ok, true);
+  const csv = g.scratch.childFiles.find((x) => x.name === `assembly-attendance-${DAY}.csv`);
+  csv.setContent('\uFEFFDate,ID,Name,Role,Grade,Status,MarkedAt\r\n' +
+    ROSTER.map((p) => `"${DAY}","${p.id}","${p.name}","${p.role}","","",""`).join('\r\n'));
+  r = post(g, v2({ t04: ['on_time', '2026-09-29T05:00:00Z'] }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const st = sheetStatuses(g);
+  assert.match(st['Rayan'], /on.?time/i);
+  assert.match(st['Omar Gahtani'], /late/i);
+  assert.match(st['Mohamed Said'], /absent/i);
+  assert.match(st['Abduljalil Kiwan'], /on.?time/i);
+});
+
+test('legacy token still accepted until ALLOW_LEGACY_TOKEN=false', () => {
+  const g = makeFakeGas({ scriptProps: {} });
+  const body = { ...v2({ t01: ['on_time', '2026-09-29T04:50:00Z'] }), token: 'r-M-LW1rIuLxESItwMg10v13SYr0P7aH' };
+  assert.equal(post(g, body).ok, true);
+  g.props.ALLOW_LEGACY_TOKEN = 'false';
+  assert.match(post(g, body).error, /unauthorized/);
+});

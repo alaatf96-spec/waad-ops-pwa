@@ -100,13 +100,25 @@ describe('PWA attendance sync safety', () => {
     expect(byId).toEqual({ t01: '2026-09-29T04:50:00.000Z', t03: '2026-09-29T04:58:00.000Z' });
   });
 
-  it('without a configured relay token nothing is sent and marks stay on the phone', async () => {
+  it('empty build secret falls back to the legacy relay token (sync never silently disabled)', async () => {
     const { sync } = await load('2026-09-29T04:50:00Z', '');
-    vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'x.apps.googleusercontent.com');
     await sync.recordAttendanceMark('2026-09-29', 't01', 'on_time');
-    await expect(sync.syncAttendanceNow('2026-09-29')).rejects.toThrow(/not configured/);
+    await sync.syncAttendanceNow('2026-09-29');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].token).toBe('r-M-LW1rIuLxESItwMg10v13SYr0P7aH');
+  });
+
+  it('without a configured relay URL nothing is sent and marks stay on the phone', async () => {
+    const { sync } = await load('2026-09-29T04:50:00Z', '');
+    vi.stubEnv('VITE_DRIVE_UPLOAD_URL', 'REPLACE_ME');
+    vi.resetModules();
+    const s2 = await import('../src/sync/driveSync.js');
+    vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'x.apps.googleusercontent.com');
+    const sync_ = s2;
+    await sync_.recordAttendanceMark('2026-09-29', 't01', 'on_time');
+    await expect(sync_.syncAttendanceNow('2026-09-29')).rejects.toThrow(/not configured/);
     expect(calls).toHaveLength(0);
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(await sync.getDirtyAttendanceDates()).toEqual(['2026-09-29']);
+    expect(await sync_.getDirtyAttendanceDates()).toEqual(['2026-09-29']);
   });
 });

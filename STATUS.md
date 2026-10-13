@@ -40,3 +40,12 @@ Body-first HUD Docs (charts/meters/Venn). Real Jeddah campus header strips. Comm
 Dirty-flag, per-mark timestamps, no weekend / zero-mark uploads (PWA); merge + latest-wins +
 reject-empty + `_backup` log (Apps Script); token moved to Script Properties / build secret.
 See [`docs/ATTENDANCE_SYNC_FIX.md`](docs/ATTENDANCE_SYNC_FIX.md). `npm test` covers it.
+
+## 2026-10-13 — Attendance data-loss fix v3 + recovery
+- Server reads CSV **and** Sheet and unions them (a blank CSV can no longer hide/wipe Sheet statuses);
+  picks the duplicate day Sheet with the most marks; appends every applied mark to the append-only
+  `Assembly_Attendance_Master` sheet (1VbII3Ki3qywisyekGMgQE6t-RMCBSJ6lC59E6ni8nQA); doGet reports `attendanceMerge: 3`.
+- Token: Script Property `UPLOAD_TOKEN` preferred; legacy public token accepted until `ALLOW_LEGACY_TOKEN=false`;
+  PWA falls back to it when the CI secret is empty (sync is never silently disabled).
+- Includes 9eedaee (dirty-only uploads, no empty/idle/weekend uploads, merge, mark log) and 2c3b737 (Ahmad Khorbati t51).
+- Recovery of 20/21/22/29 Sep and 11/12 Oct written back to day Sheets (backups in Daily CSV Exports/_backup 2026-10-13 before recovery).

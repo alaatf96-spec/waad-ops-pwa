@@ -56,8 +56,24 @@ function getUploadToken_() {
 }
 
 /** Constant-time-ish compare; false when the server token is not configured. */
+/**
+ * Transitional: until UPLOAD_TOKEN is set in Script Properties (and the PWA build secret
+ * VITE_DRIVE_UPLOAD_TOKEN matches it), the token already shipped in the old public PWA bundle
+ * keeps working so phones never lose sync. Set Script Property ALLOW_LEGACY_TOKEN=false after
+ * rotating. The legacy value was public in every old build, so it is not a secret.
+ */
+var LEGACY_UPLOAD_TOKEN_ = 'r-M-LW1rIuLxESItwMg10v13SYr0P7aH';
+function legacyTokenAllowed_() {
+  try {
+    return String(PropertiesService.getScriptProperties().getProperty('ALLOW_LEGACY_TOKEN') || '') !== 'false';
+  } catch (e) { return true; }
+}
 function uploadTokenMatches_(given) {
-  var expected = getUploadToken_();
+  if (tokenEquals_(getUploadToken_(), given)) return true;
+  return legacyTokenAllowed_() && tokenEquals_(LEGACY_UPLOAD_TOKEN_, given);
+}
+function tokenEquals_(expected, given) {
+  expected = String(expected || '');
   given = String(given == null ? '' : given);
   if (!expected || !given || expected.length !== given.length) return false;
   var diff = 0;
@@ -423,7 +439,8 @@ function doGet() {
     driveSearch: true,
     healthSnapshots: true,
     listFolder: true,
-    attendanceMerge: 2
+    attendanceMerge: 3,
+    attendanceMaster: true
   });
 }
 
@@ -1631,6 +1648,22 @@ function mergeAttendanceRows_(existing, incoming) {
 
 /** Read the existing day's data: canonical CSV first, else the day's Sheet. */
 function readExistingAttendance_(folder, date) {
+  // Oct 2026 fix: read BOTH the CSV and the Sheet and union them (a real status in either
+  // survives). Before, a blank CSV hid real statuses that were only in the Sheet
+  // (e.g. statuses restored by hand / recovery), and the next upload wiped them.
+  var fromCsv = readExistingAttendanceCsv_(folder, date);
+  var fromSheet = readExistingAttendanceSheet_(folder, date);
+  if (fromCsv.source === 'none') return fromSheet;
+  fromCsv.sheetId = fromSheet.sheetId;
+  if (!fromSheet.rows.length) return fromCsv;
+  var u = mergeAttendanceRows_(fromCsv.rows, fromSheet.rows.map(function (r) {
+    // Sheet statuses have no timestamp: they only fill blanks, never beat a timed CSV mark.
+    return { id: r.id, name: r.name, role: r.role, grade: r.grade, status: r.status, markedAt: '' };
+  }));
+  return { file: fromCsv.file, content: fromCsv.content, rows: u.rows, source: 'csv+sheet', sheetId: fromSheet.sheetId };
+}
+
+function readExistingAttendanceCsv_(folder, date) {
   var csvName = 'assembly-attendance-' + date + '.csv';
   var it = folder.getFilesByName(csvName);
   if (it.hasNext()) {
@@ -1638,6 +1671,12 @@ function readExistingAttendance_(folder, date) {
     var text = f.getBlob().getDataAsString();
     return { file: f, content: text, rows: parseAttendanceCsv_(text), source: 'csv' };
   }
+  return { file: null, content: '', rows: [], source: 'none' };
+}
+
+function readExistingAttendanceSheet_(folder, date) {
+  // Duplicate same-named day sheets exist (4 Oct, 5 Oct): use the one with the most marks.
+  var best = { file: null, content: '', rows: [], source: 'none', sheetId: '' };
   var sheetTitle = 'Assembly Attendance — ' + date;
   var sit = folder.getFilesByName(sheetTitle);
   while (sit.hasNext()) {
@@ -1662,10 +1701,12 @@ function readExistingAttendance_(folder, date) {
             status: denormalizeStatus_(data[i][cStatus]), markedAt: '' });
         }
       }
-      return { file: null, content: '', rows: rows, source: 'sheet' };
+      if (best.source === 'none' || countMarkedRows_(rows) > countMarkedRows_(best.rows)) {
+        best = { file: null, content: '', rows: rows, source: 'sheet', sheetId: sf.getId() };
+      }
     } catch (eS) {}
   }
-  return { file: null, content: '', rows: [], source: 'none' };
+  return best;
 }
 
 /** "On time"/"Present" etc. → PWA keys; unknown strings are kept as-is. */
@@ -1700,6 +1741,39 @@ function appendAttendanceLog_(backupFolder, date, incoming, appliedList, receive
       String(schema || 'legacy'), note || ''];
   });
   sh.getRange(sh.getLastRow() + 1, 1, values.length, ATTENDANCE_LOG_HEADERS.length).setValues(values);
+}
+
+/**
+ * Durable history: Assembly_Attendance_Master (one row per mark event, append-only, never
+ * rewritten). Latest row per Date+Staff ID is that person's status for the day.
+ * Script Property ATTENDANCE_MASTER_ID overrides the default sheet.
+ */
+var ATTENDANCE_MASTER_DEFAULT_ID = '1VbII3Ki3qywisyekGMgQE6t-RMCBSJ6lC59E6ni8nQA';
+var ATTENDANCE_MASTER_HEADERS = ['Date', 'Day', 'Staff ID', 'Name', 'Role', 'Status', 'Source', 'Logged at (Riyadh)'];
+function attendanceMasterId_() {
+  try {
+    var p = PropertiesService.getScriptProperties().getProperty('ATTENDANCE_MASTER_ID');
+    if (p) return p;
+    if (PropertiesService.getScriptProperties().getProperty('DAILY_CSV_FOLDER_ID')) return ''; // scratch tests
+  } catch (e) {}
+  return ATTENDANCE_MASTER_DEFAULT_ID;
+}
+var ATT_LABEL_ = { on_time: 'On time', late: 'Late', absent: 'Absent' };
+function appendAttendanceMaster_(date, applied, receivedAt) {
+  if (!applied || !applied.length) return;
+  var id = attendanceMasterId_();
+  if (!id) return;
+  var sh = SpreadsheetApp.openById(id).getSheets()[0];
+  if (sh.getLastRow() === 0) sh.getRange(1, 1, 1, ATTENDANCE_MASTER_HEADERS.length).setValues([ATTENDANCE_MASTER_HEADERS]);
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  var dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()];
+  var logged = Utilities.formatDate(new Date(attTsMs_(receivedAt)), 'Asia/Riyadh', 'yyyy-MM-dd HH:mm:ss');
+  var values = applied.map(function (a) {
+    var st = denormalizeStatus_(a.status);
+    var when = a.markedAt ? Utilities.formatDate(new Date(attTsMs_(a.markedAt)), 'Asia/Riyadh', 'HH:mm') : '';
+    return [date, dow, a.id, a.name, a.role || '', ATT_LABEL_[st] || a.status, 'PWA sync (marked ' + when + ')', logged];
+  });
+  sh.getRange(sh.getLastRow() + 1, 1, values.length, ATTENDANCE_MASTER_HEADERS.length).setValues(values);
 }
 
 /** First time the merge code touches a day, keep a verbatim copy of the original CSV. */
@@ -1750,6 +1824,9 @@ function handleAttendance_(body) {
 
     snapshotOriginalCsvOnce_(backupFolder, date, existing);
     appendAttendanceLog_(backupFolder, date, incoming, merge.applied, receivedAt, schema, '');
+    try { appendAttendanceMaster_(date, merge.applied, receivedAt); } catch (eM) {
+      appendAttendanceLog_(backupFolder, date, [], [], receivedAt, schema, 'MASTER APPEND FAILED ' + eM);
+    }
 
     var csvName = 'assembly-attendance-' + date + '.csv';
     var csvContent = attendanceRowsToCanonicalCsv_(date, merge.rows);
@@ -1758,7 +1835,7 @@ function handleAttendance_(body) {
     else csvFile = folder.createFile(csvName, csvContent, 'text/csv');
 
     var sheetName = 'Assembly Attendance — ' + date;
-    var ss = findOrCreateSpreadsheet_(folder, sheetName);
+    var ss = existing.sheetId ? SpreadsheetApp.openById(existing.sheetId) : findOrCreateSpreadsheet_(folder, sheetName);
     formatAttendanceSheet_(ss, date, merge.rows.map(function (r) {
       return {
         name: r.name, role: r.role, status: r.status, grade: r.grade,
