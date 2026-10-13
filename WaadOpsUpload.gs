@@ -284,6 +284,7 @@ var TEACHER_ROSTER = [
   { id: "t48", name: "Sohaib Liaquat", role: "teacher" },
   { id: "t49", name: "Souhaim Najah", role: "teacher" },
   { id: "t50", name: "Yamen Zahreddine", role: "teacher" },
+  { id: "t51", name: "Ahmad Khorbati", role: "teacher" }, // new Grade 6 Maths, joined 13 Oct 2026
 ];
 
 /** Alternate folder/Doc spellings (Helmy vs Hilmi, etc.) */

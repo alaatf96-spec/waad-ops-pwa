@@ -50,6 +50,7 @@ export const TEACHER_ROSTER = [
   { id: "t48", name: "Sohaib Liaquat", role: "teacher" },
   { id: "t49", name: "Souhaim Najah", role: "teacher" },
   { id: "t50", name: "Yamen Zahreddine", role: "teacher" },
+  { id: "t51", name: "Ahmad Khorbati", role: "teacher" }, // new Grade 6 Maths, joined 13 Oct 2026
 ];
 
 /** Boys G4–6 from Faisal Alsamiti starred share: 26-27 Name list for WASc (boys tabs). */
