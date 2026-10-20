@@ -14,7 +14,7 @@ import {
 import { renderAttendance } from './attendance/attendance.js';
 import { renderBehavior } from './behavior/behavior.js';
 import { renderTeachers } from './teachers/teachers.js';
-import { uploadAllNow, startIdleUploadWatcher, flushSyncKeepalive } from './sync/driveSync.js';
+import { uploadAllNow, startIdleUploadWatcher, flushSyncKeepalive, startReliableSync } from './sync/driveSync.js';
 import { DRIVE_LINKS } from './sync/driveConfig.js';
 import {
   getLang,
@@ -240,6 +240,7 @@ async function showApp() {
 
   bindLeaveSync();
   startIdleUploadWatcher();
+  startReliableSync();
 
   rerender = async () => {
     if (currentView === 'attendance') await openTool('attendance');

@@ -3,16 +3,18 @@
  * Primary: Apps Script webhook (no OAuth client needed on phone).
  * Fallback: GIS drive.file token client when VITE_GOOGLE_CLIENT_ID is set.
  */
-import { TEACHER_ROSTER, STUDENT_ROSTER } from '../data/roster.js';
+import { TEACHER_ROSTER, STUDENT_ROSTER, STAFF_ID_MERGES } from '../data/roster.js';
 import {
   getAttendanceRecord,
   saveAttendance,
+  listAttendanceRecords,
   listIncidents,
   todayRiyadh,
   idbGet,
   idbSet
 } from '../db/idb.js';
 import {
+  isWeekendDate,
   buildMarkList,
   countMarks,
   shouldUploadAttendance,
@@ -234,17 +236,16 @@ function buildWebhookPayload({ kind, name, content, mimeType, date, rows, fields
 
 function parseWebhookResponse(text, name) {
   if (!text) return { ok: true, name, unverified: true };
+  let data;
   try {
-    const data = JSON.parse(text);
-    if (!data.ok) throw new Error(data.error || 'Upload relay failed');
-    return data;
-  } catch (e) {
-    if (e.message && (e.message.includes('relay') || e.message.includes('unauthorized') || e.message.includes('Upload'))) {
-      throw e;
-    }
-    // Non-JSON body (HTML echo page) — request likely reached Apps Script
+    data = JSON.parse(text);
+  } catch {
+    // Non-JSON body (HTML page) — not proof of a save; the caller verifies by reading back.
     return { ok: true, name, unverified: true };
   }
+  // A readable refusal from the server is never treated as a save.
+  if (!data || !data.ok) throw new Error((data && data.error) || 'Upload relay failed');
+  return data;
 }
 
 /**
@@ -469,9 +470,18 @@ export async function syncAttendanceNow(date = todayRiyadh(), { keepalive = fals
       // Marks stay on the phone (dirty) until the relay is configured.
       throw new Error('Upload relay not configured — marks kept on this device');
     }
+    // Saved only when the Sheet confirms it: read the day back and check every mark is there.
+    if (!keepalive) {
+      const check = await verifyDayInSheet(date, marks);
+      if (check === false) throw new Error('Not confirmed by the Sheet yet — kept on this phone, retrying');
+      if (check === null && file.unverified) throw new Error('Save not confirmed — kept on this phone, retrying');
+    } else if (file.unverified) {
+      return file; // leave-site beacon: stays dirty until a later verified sync
+    }
     await idbSet(DIRTY_KEY, clearDirtyIfUnchanged(await getDirtyMap(), date, seqAtSend));
     await refreshAttendancePending();
     await setMeta({
+      lastVerifiedAt: new Date().toISOString(),
       lastAttendanceAt: new Date().toISOString(),
       lastError: null,
       lastAttendanceFileId: file.fileId || file.id || file.spreadsheetId || null,
@@ -831,4 +841,144 @@ export async function renderSync(root) {
 
   subscribeSyncStatus(() => paint());
   await paint();
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Oct 2026 reliability layer: the Google Sheet is the source of truth.
+ * - every tap is uploaded at once and only counts as saved after a read-back
+ * - unsent taps stay queued on the phone and retry every 30 s and when online
+ * - opening a day loads it from the Sheet, so nothing lives only on the device
+ * - old device-only history is replayed once, filling blanks only
+ * ------------------------------------------------------------------ */
+
+let serverInfoCache = null;
+export async function getServerInfo() {
+  if (serverInfoCache) return serverInfoCache;
+  const res = await fetch(DEFAULT_UPLOAD_URL, { redirect: 'follow' });
+  serverInfoCache = await res.json();
+  return serverInfoCache;
+}
+
+/** Marks stored in the Sheet for a day: { id: {status, markedAt} } — throws on network error. */
+export async function fetchServerDay(date) {
+  const u = `${DEFAULT_UPLOAD_URL}?action=attendanceDay&date=${encodeURIComponent(date)}&token=${encodeURIComponent(DEFAULT_UPLOAD_TOKEN)}`;
+  const res = await fetch(u, { redirect: 'follow' });
+  const data = await res.json();
+  if (!data || !data.ok || !Array.isArray(data.marks)) return null; // server without read-back support
+  const out = {};
+  for (const m of data.marks) out[m.id] = { status: m.status, markedAt: m.markedAt || '' };
+  return out;
+}
+
+/** true = every local mark is in the Sheet; false = something missing; null = cannot check. */
+export async function verifyDayInSheet(date, marks) {
+  let server;
+  try {
+    server = await fetchServerDay(date);
+  } catch {
+    return null;
+  }
+  if (!server) return null;
+  for (const [id, st] of Object.entries(marks || {})) {
+    if (!st) continue;
+    const cid = STAFF_ID_MERGES[id] || id;
+    if (!server[cid] || !server[cid].status) return false;
+  }
+  return true;
+}
+
+/**
+ * Load the day from the Sheet into the phone. Server statuses win, except for marks
+ * on this phone that have not been confirmed yet (those are still queued to upload).
+ */
+export async function pullServerDay(date) {
+  const server = await fetchServerDay(date);
+  if (!server) return null;
+  const rec = (await getAttendanceRecord(date)) || {};
+  const marks = { ...(rec.marks || {}) };
+  const markTimes = { ...(rec.markTimes || {}) };
+  const dirty = !!(await getDirtyMap())[date];
+  let changed = false;
+  for (const [id, v] of Object.entries(server)) {
+    if (!v.status) continue;
+    if (dirty && marks[id]) continue; // unsent local tap — it will be uploaded
+    if (marks[id] !== v.status) {
+      marks[id] = v.status;
+      if (v.markedAt) markTimes[id] = v.markedAt;
+      changed = true;
+    }
+  }
+  if (changed) await saveAttendance(date, marks, markTimes);
+  return marks;
+}
+
+/** Fold retired IDs (t42 -> t01) in every local day; the kept record wins, the old one only fills a blank. */
+async function migrateLocalStaffIds() {
+  for (const rec of await listAttendanceRecords()) {
+    const marks = { ...(rec.marks || {}) };
+    const times = { ...(rec.markTimes || {}) };
+    let changed = false;
+    for (const [oldId, newId] of Object.entries(STAFF_ID_MERGES)) {
+      if (!(oldId in marks)) continue;
+      if (!marks[newId] && marks[oldId]) {
+        marks[newId] = marks[oldId];
+        if (times[oldId]) times[newId] = times[oldId];
+      }
+      delete marks[oldId];
+      delete times[oldId];
+      changed = true;
+    }
+    if (changed) await saveAttendance(rec.date, marks, times);
+  }
+}
+
+const REPLAY_KEY = 'legacyReplayV4';
+/**
+ * One-time: send every day stored on this phone to the Sheet with fillOnly=true, so days that
+ * were wiped in Drive (e.g. 27 Sep, 4 Oct, 19 Oct) get their statuses back without overriding
+ * anything already in the Sheet. Runs only against a server that supports fillOnly (v4+).
+ */
+export async function replayLocalHistoryOnce() {
+  const done = (await idbGet(REPLAY_KEY)) || {};
+  let info;
+  try { info = await getServerInfo(); } catch { return { skipped: 'offline' }; }
+  if (!info || Number(info.attendanceMerge) < 4) return { skipped: 'server-not-ready' };
+  await migrateLocalStaffIds();
+  const today = todayRiyadh();
+  const results = [];
+  for (const rec of await listAttendanceRecords()) {
+    const d = rec.date;
+    if (done[d] || d > today || isWeekendDate(d) || countMarks(rec.marks) === 0) continue;
+    try {
+      const markList = buildMarkList(rec.marks, rec.markTimes || {}, TEACHER_ROSTER, rec.updatedAt);
+      const r = await uploadViaWebhook({
+        kind: 'attendance',
+        name: `assembly-attendance-${d}.csv`,
+        content: '',
+        mimeType: 'text/csv',
+        date: d,
+        fields: { schema: 2, marks: markList, fillOnly: true, replay: 'device-history-v4', sentAt: new Date().toISOString() }
+      });
+      if (r && !r.unverified) { done[d] = new Date().toISOString(); results.push({ date: d, applied: r.applied || 0 }); }
+    } catch (e) {
+      results.push({ date: d, error: e.message || String(e) });
+    }
+  }
+  await idbSet(REPLAY_KEY, done);
+  return { results };
+}
+
+let retryTimer = null;
+/** Keep retrying queued taps: every 30 s while anything is pending, and as soon as the phone is back online. */
+export function startReliableSync() {
+  const tick = async () => {
+    try {
+      if ((await getDirtyAttendanceDates()).length) await syncPendingAttendance();
+    } catch { /* stays queued; next tick retries */ }
+  };
+  if (!retryTimer) retryTimer = setInterval(tick, 30000);
+  if (typeof window !== 'undefined') window.addEventListener('online', tick);
+  replayLocalHistoryOnce().catch(() => {});
+  tick();
 }

@@ -5,7 +5,8 @@ import {
   scheduleDriveSync,
   recordAttendanceMark,
   subscribeSyncStatus,
-  getSyncStatus
+  getSyncStatus,
+  pullServerDay
 } from '../sync/driveSync.js';
 import { t, getLang } from '../i18n/index.js';
 
@@ -140,11 +141,11 @@ export async function renderAttendance(root) {
       if (res && res.skipped) {
         if (!quiet && res.reason === 'weekend') toast('Weekend — attendance is not uploaded on Fri/Sat.');
         else if (!quiet && res.reason === 'no-marks') toast('Nothing marked yet — nothing to upload.');
-      } else if (!quiet) toast(t('synced'));
+      } else toast(quiet ? t('savedToSheet') : t('synced'));
       await paintSync();
     } catch (e) {
       scheduleDriveSync('attendance');
-      toast(e.message || t('syncFailed'), true);
+      toast(`${t('notSavedYet')} ${e.message ? '(' + e.message.slice(0, 60) + ')' : ''}`, true);
       await paintSync();
     } finally {
       syncing = false;
@@ -172,6 +173,16 @@ export async function renderAttendance(root) {
     dateLabel.textContent = formatRiyadhDisplay(date, getLang());
     paint();
     await paintSync();
+    // The Sheet is the source of truth: load what is stored there for this day.
+    try {
+      const fromSheet = await pullServerDay(date);
+      if (fromSheet && date === d) {
+        marks = fromSheet;
+        paint();
+      }
+    } catch {
+      /* offline: show what is on the phone; queued taps still upload later */
+    }
   }
 
   function paint() {

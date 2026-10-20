@@ -1,6 +1,6 @@
 /** Boys school roster — Junaid Schedules v2 (G4-6 + G7-12 Teachers.pdf) + ops */
 export const TEACHER_ROSTER = [
-  { id: "t01", name: "Rayan", role: "ops" },
+  { id: "t01", name: "Rayan Ashgan", role: "ops" }, // merged 20 Oct 2026: former "Rayan" (t01) + "Rayan Ashgan" (t42)
   { id: "t02", name: "Omar Gahtani", role: "ops" },
   { id: "t03", name: "Mohamed Said", role: "ops" },
   { id: "t04", name: "Abduljalil Kiwan", role: "teacher" },
@@ -41,7 +41,6 @@ export const TEACHER_ROSTER = [
   { id: "t39", name: "Omar Abdouni", role: "teacher" },
   { id: "t40", name: "Omar Alkunaydri", role: "teacher" },
   { id: "t41", name: "Osama Althuwaybi", role: "teacher" },
-  { id: "t42", name: "Rayan Ashgan", role: "teacher" },
   { id: "t43", name: "Said Hussain", role: "teacher" },
   { id: "t44", name: "Saleh Alattas", role: "teacher" },
   { id: "t45", name: "Shayan Siddiqui", role: "teacher" },
@@ -50,7 +49,7 @@ export const TEACHER_ROSTER = [
   { id: "t48", name: "Sohaib Liaquat", role: "teacher" },
   { id: "t49", name: "Souhaim Najah", role: "teacher" },
   { id: "t50", name: "Yamen Zahreddine", role: "teacher" },
-  { id: "t51", name: "Ahmad Khorbati", role: "teacher" }, // new Grade 6 Maths, joined 13 Oct 2026
+  { id: "t51", name: "Ahmad Kharbatli", role: "teacher" }, // a.kharbatli@ (also spelled Ahmad Khorbati / "Ahmed Kh.")
 ];
 
 /** Boys G4–6 from Faisal Alsamiti starred share: 26-27 Name list for WASc (boys tabs). */
@@ -300,3 +299,6 @@ export const CONSEQUENCES = [
   "Pending",
 ];
 
+
+/** Retired staff IDs -> the record that now holds their history. */
+export const STAFF_ID_MERGES = { t42: 't01' };

@@ -250,7 +250,7 @@ function appendExecutiveCoverTitle_(body, docTypeLabel, personName, subtitle) {
 
 /** Mirrors src/data/roster.js TEACHER_ROSTER */
 var TEACHER_ROSTER = [
-  { id: "t01", name: "Rayan", role: "ops" },
+  { id: "t01", name: "Rayan Ashgan", role: "ops" }, // merged 20 Oct 2026: former t01 "Rayan" + t42 "Rayan Ashgan"
   { id: "t02", name: "Omar Gahtani", role: "ops" },
   { id: "t03", name: "Mohamed Said", role: "ops" },
   { id: "t04", name: "Abduljalil Kiwan", role: "teacher" },
@@ -291,7 +291,6 @@ var TEACHER_ROSTER = [
   { id: "t39", name: "Omar Abdouni", role: "teacher" },
   { id: "t40", name: "Omar Alkunaydri", role: "teacher" },
   { id: "t41", name: "Osama Althuwaybi", role: "teacher" },
-  { id: "t42", name: "Rayan Ashgan", role: "teacher" },
   { id: "t43", name: "Said Hussain", role: "teacher" },
   { id: "t44", name: "Saleh Alattas", role: "teacher" },
   { id: "t45", name: "Shayan Siddiqui", role: "teacher" },
@@ -300,7 +299,7 @@ var TEACHER_ROSTER = [
   { id: "t48", name: "Sohaib Liaquat", role: "teacher" },
   { id: "t49", name: "Souhaim Najah", role: "teacher" },
   { id: "t50", name: "Yamen Zahreddine", role: "teacher" },
-  { id: "t51", name: "Ahmad Khorbati", role: "teacher" }, // new Grade 6 Maths, joined 13 Oct 2026
+  { id: "t51", name: "Ahmad Kharbatli", role: "teacher" }, // a.kharbatli@ — also spelled Ahmad Khorbati / "Ahmed Kh."
 ];
 
 /** Alternate folder/Doc spellings (Helmy vs Hilmi, etc.) */
@@ -426,7 +425,12 @@ function doPost(e) {
   }
 }
 
-function doGet() {
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  if (p.action === 'attendanceDay') {
+    if (!uploadTokenMatches_(p.token)) return json_({ ok: false, error: 'unauthorized' });
+    return json_(readAttendanceDayForClient_(String(p.date || '')));
+  }
   return json_({
     ok: true,
     service: 'WaadOpsUpload',
@@ -439,7 +443,10 @@ function doGet() {
     driveSearch: true,
     healthSnapshots: true,
     listFolder: true,
-    attendanceMerge: 3,
+    attendanceMerge: 4,
+    attendanceReadBack: true,
+    staffCanon: true,
+    nightlyBackup: true,
     attendanceMaster: true
   });
 }
@@ -1524,6 +1531,51 @@ function countMarkedRows_(rows) {
  * schema 2 (fixed PWA): body.marks = only marked people, each with markedAt.
  * legacy (old PWA / CSV): body.rows or body.content; marks get receipt time.
  */
+/**
+ * One person = one record. Old IDs/spellings collapse onto the canonical staff ID.
+ * t42 "Rayan Ashgan" + t01 "Rayan" -> t01 "Rayan Ashgan" (t01 holds the full history).
+ * "Ahmad Khorbati" / "Ahmed Kh." -> t51 "Ahmad Kharbatli".
+ */
+var STAFF_CANON_ = {
+  ids: { t42: 't01' },
+  names: {
+    'rayan': 't01', 'rayan ashgan': 't01', 'rayan alashgan': 't01', 'rayan alaishqan': 't01',
+    'ahmad khorbati': 't51', 'ahmad kharbatli': 't51', 'ahmed kharbatli': 't51', 'ahmed kh.': 't51', 'ahmed kh': 't51'
+  }
+};
+function canonStaff_(row) {
+  var r = row || {};
+  var id = String(r.id || '').trim();
+  var nn = attNormName_(r.name || r.staff);
+  var cid = STAFF_CANON_.ids[id] || id;
+  var byName = STAFF_CANON_.names[nn];
+  if (byName && (!cid || cid === byName || cid === 't01' || cid === 't51')) cid = byName;
+  if (!cid) {
+    for (var i = 0; i < TEACHER_ROSTER.length; i++) {
+      if (attNormName_(TEACHER_ROSTER[i].name) === nn) { cid = TEACHER_ROSTER[i].id; break; }
+    }
+  }
+  var p = null;
+  for (var j = 0; j < TEACHER_ROSTER.length; j++) if (TEACHER_ROSTER[j].id === cid) { p = TEACHER_ROSTER[j]; break; }
+  var out = {};
+  for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k)) out[k] = r[k];
+  out.id = cid;
+  if (p) { out.name = p.name; out.role = p.role; }
+  return out;
+}
+/** Collapse duplicates after canonicalising: the first row keeps its status; later rows only fill a blank. */
+function collapseCanonRows_(rows) {
+  var out = [], pos = {};
+  for (var i = 0; i < (rows || []).length; i++) {
+    var c = canonStaff_(rows[i]);
+    var key = c.id || ('name:' + attNormName_(c.name));
+    if (pos[key] == null) { pos[key] = out.length; out.push(c); continue; }
+    var cur = out[pos[key]];
+    if (attStatusBlank_(cur.status) && !attStatusBlank_(c.status)) { cur.status = c.status; cur.markedAt = c.markedAt || ''; }
+  }
+  return out;
+}
+
 function normalizeIncomingMarks_(body, receivedAtIso) {
   var receivedMs = attTsMs_(receivedAtIso);
   var list = [];
@@ -1575,14 +1627,15 @@ function normalizeIncomingMarks_(body, receivedAtIso) {
       markedAt: ''
     });
   }
-  return list;
+  return list.map(canonStaff_);
 }
 
 /**
  * Pure merge. existing/incoming: [{id,name,role,grade,status,markedAt}].
  * Returns { rows, applied: [...incoming marks that changed data], ignored: [...] }.
  */
-function mergeAttendanceRows_(existing, incoming) {
+function mergeAttendanceRows_(existing, incoming, opts) {
+  var fillOnly = !!(opts && opts.fillOnly);
   var out = [];
   var byId = {};
   var byName = {};
@@ -1635,6 +1688,7 @@ function mergeAttendanceRows_(existing, incoming) {
       applied.push(inc);
       continue;
     }
+    if (fillOnly) { ignored.push(inc); continue; } // replayed old device data only fills blanks
     if (attTsMs_(inc.markedAt) >= attTsMs_(cur.markedAt)) { // rule 2: latest wins
       if (cur.status !== inc.status || cur.markedAt !== inc.markedAt) applied.push(inc);
       cur.status = inc.status;
@@ -1648,6 +1702,12 @@ function mergeAttendanceRows_(existing, incoming) {
 
 /** Read the existing day's data: canonical CSV first, else the day's Sheet. */
 function readExistingAttendance_(folder, date) {
+  var ex = readExistingAttendanceRaw_(folder, date);
+  ex.rows = collapseCanonRows_(ex.rows);
+  return ex;
+}
+
+function readExistingAttendanceRaw_(folder, date) {
   // Oct 2026 fix: read BOTH the CSV and the Sheet and union them (a real status in either
   // survives). Before, a blank CSV hid real statuses that were only in the Sheet
   // (e.g. statuses restored by hand / recovery), and the next upload wiped them.
@@ -1809,7 +1869,7 @@ function handleAttendance_(body) {
     var folder = DriveApp.getFolderById(folderId);
     var existing = readExistingAttendance_(folder, date);
     var existingMarked = countMarkedRows_(existing.rows);
-    var merge = mergeAttendanceRows_(existing.rows, incoming);
+    var merge = mergeAttendanceRows_(existing.rows, incoming, { fillOnly: body.fillOnly === true });
     var mergedMarked = countMarkedRows_(merge.rows);
 
     var backupFolder = getAttendanceBackupFolder_(folder);
@@ -3671,3 +3731,52 @@ function styleIncidentTableHeaderLike_(table) {
   }
 }
 
+
+
+/** Read-only: the day as stored in Drive (the source of truth), for the app to load and verify saves. */
+function readAttendanceDayForClient_(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Invalid date' };
+  var folder = DriveApp.getFolderById(attendanceFolderId_());
+  var ex = readExistingAttendance_(folder, date);
+  return {
+    ok: true,
+    date: date,
+    source: ex.source,
+    marks: ex.rows.filter(function (r) { return r.id && !attStatusBlank_(r.status); }).map(function (r) {
+      return { id: r.id, name: r.name, status: denormalizeStatus_(r.status), markedAt: r.markedAt || '' };
+    })
+  };
+}
+
+/**
+ * Nightly backup: copies every day file (Sheets + CSVs) and the master history into
+ * Daily CSV Exports/_nightly/<date>. Never deletes or edits anything.
+ * Run installNightlyBackupTrigger() once from the editor.
+ */
+function nightlyAttendanceBackup() {
+  var folder = DriveApp.getFolderById(attendanceFolderId_());
+  var nightly = findOrCreateFolder_(folder, '_nightly');
+  var stamp = Utilities.formatDate(new Date(), 'Asia/Riyadh', 'yyyy-MM-dd');
+  var dest = findOrCreateFolder_(nightly, stamp);
+  var it = folder.getFiles(), n = 0;
+  while (it.hasNext()) {
+    var f = it.next();
+    if (!/^(Assembly Attendance|assembly-attendance-)/.test(f.getName())) continue;
+    if (dest.getFilesByName(f.getName()).hasNext()) continue;
+    f.makeCopy(f.getName(), dest); n++;
+  }
+  var mid = attendanceMasterId_();
+  if (mid) {
+    var mf = DriveApp.getFileById(mid);
+    if (!dest.getFilesByName(mf.getName()).hasNext()) { mf.makeCopy(mf.getName(), dest); n++; }
+  }
+  return { ok: true, folder: dest.getId(), copied: n };
+}
+
+function installNightlyBackupTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'nightlyAttendanceBackup') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('nightlyAttendanceBackup').timeBased().atHour(22).everyDays(1).inTimezone('Asia/Riyadh').create();
+  return 'Nightly backup trigger installed (22:00 Asia/Riyadh)';
+}

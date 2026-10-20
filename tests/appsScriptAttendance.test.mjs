@@ -161,7 +161,7 @@ test('existing Sheet-style CSV (#,Staff,…) is matched by name', () => {
   const res = post(g, v2({ t02: ['late', '2026-09-29T05:30:00Z'] }));
   assert.equal(res.ok, true);
   const rows = csvRows(g);
-  assert.equal(rows.find((r) => r.Name === 'Rayan').Status, 'on_time');
+  assert.equal(rows.find((r) => r.Name === 'Rayan Ashgan').Status, 'on_time');
   assert.equal(rows.find((r) => r.Name === 'Omar Gahtani').Status, 'late');
   assert.equal(rows.find((r) => r.Name === 'Omar Gahtani').ID, 't02');
 });
@@ -207,7 +207,7 @@ test('blank CSV + recovered Sheet: a new mark keeps every Sheet status', () => {
   r = post(g, v2({ t04: ['on_time', '2026-09-29T05:00:00Z'] }));
   assert.equal(r.ok, true, JSON.stringify(r));
   const st = sheetStatuses(g);
-  assert.match(st['Rayan'], /on.?time/i);
+  assert.match(st['Rayan Ashgan'], /on.?time/i);
   assert.match(st['Omar Gahtani'], /late/i);
   assert.match(st['Mohamed Said'], /absent/i);
   assert.match(st['Abduljalil Kiwan'], /on.?time/i);
@@ -219,4 +219,59 @@ test('legacy token still accepted until ALLOW_LEGACY_TOKEN=false', () => {
   assert.equal(post(g, body).ok, true);
   g.props.ALLOW_LEGACY_TOKEN = 'false';
   assert.match(post(g, body).error, /unauthorized/);
+});
+
+
+// ── 20 Oct 2026: one record per person, replay fills blanks only, read-back ──
+test('Rayan + Rayan Ashgan collapse into one record; the kept record (t01) wins', () => {
+  const g = makeFakeGas({ scriptProps: { UPLOAD_TOKEN: TOKEN }, now: '2026-09-29T06:00:00Z' });
+  const staffCsv = '\uFEFF#,Staff,Role,Status,Time,Notes\r\n"1","Rayan","ops","On time","",""\r\n"42","Rayan Ashgan","teacher","Absent","",""\r\n"2","Omar Gahtani","ops","","",""';
+  g.scratch.createFile(`assembly-attendance-${DAY}.csv`, staffCsv, 'text/csv');
+  const res = post(g, v2({ t02: ['late', '2026-09-29T05:30:00Z'] }));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const rows = csvRows(g);
+  const rayan = rows.filter((r) => /rayan/i.test(r.Name));
+  assert.equal(rayan.length, 1);
+  assert.equal(rayan[0].ID, 't01');
+  assert.equal(rayan[0].Name, 'Rayan Ashgan');
+  assert.equal(rayan[0].Status, 'on_time');
+});
+
+test('a mark sent under the retired id t42 lands on t01', () => {
+  const g = makeFakeGas({ scriptProps: { UPLOAD_TOKEN: TOKEN }, now: '2026-09-29T06:00:00Z' });
+  const body = v2({});
+  body.marks = [{ id: 't42', name: 'Rayan Ashgan', role: 'teacher', grade: '', status: 'late', markedAt: '2026-09-29T05:30:00Z' }];
+  const res = post(g, body);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const rows = csvRows(g);
+  assert.equal(rows.filter((r) => /rayan/i.test(r.Name)).length, 1);
+  assert.equal(rows.find((r) => r.ID === 't01').Status, 'late');
+});
+
+test('Ahmad Khorbati / Ahmed Kh. are the same person as t51 Ahmad Kharbatli', () => {
+  const g = makeFakeGas();
+  const c = g.ctx.canonStaff_({ id: '', name: 'Ahmad Khorbati', status: 'late' });
+  assert.equal(c.id, 't51');
+  assert.equal(c.name, 'Ahmad Kharbatli');
+  assert.equal(g.ctx.canonStaff_({ name: 'Ahmed Kh.' }).id, 't51');
+});
+
+test('fillOnly replay fills blanks but never changes an existing status', () => {
+  const g = makeFakeGas({ scriptProps: { UPLOAD_TOKEN: TOKEN }, now: '2026-09-29T06:00:00Z' });
+  post(g, v2({ t02: ['late', '2026-09-29T04:50:00Z'] }));
+  const body = v2({ t02: ['absent', '2026-09-29T05:59:00Z'], t03: ['on_time', '2026-09-29T05:59:00Z'] });
+  body.fillOnly = true;
+  const res = post(g, body);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const rows = csvRows(g);
+  assert.equal(rows.find((r) => r.ID === 't02').Status, 'late');
+  assert.equal(rows.find((r) => r.ID === 't03').Status, 'on_time');
+});
+
+test('read-back returns what is stored for the day', () => {
+  const g = makeFakeGas({ scriptProps: { UPLOAD_TOKEN: TOKEN }, now: '2026-09-29T06:00:00Z' });
+  post(g, v2({ t02: ['late', '2026-09-29T04:50:00Z'] }));
+  const out = g.ctx.readAttendanceDayForClient_(DAY);
+  assert.equal(out.ok, true);
+  assert.equal(JSON.stringify(out.marks.map((m) => [m.id, m.status])), JSON.stringify([['t02', 'late']]));
 });

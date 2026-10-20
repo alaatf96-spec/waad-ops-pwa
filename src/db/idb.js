@@ -87,6 +87,16 @@ export async function saveAttendance(date, marks, markTimes) {
   });
 }
 
+/** Every locally stored attendance day record. */
+export async function listAttendanceRecords() {
+  const store = await tx('attendance');
+  return new Promise((resolve, reject) => {
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 export async function listIncidents() {
   const store = await tx('incidents');
   return new Promise((resolve, reject) => {
