@@ -3,8 +3,25 @@
  * Primary: Apps Script webhook (no OAuth client needed on phone).
  * Fallback: GIS drive.file token client when VITE_GOOGLE_CLIENT_ID is set.
  */
-import { TEACHER_ROSTER, STUDENT_ROSTER } from '../data/roster.js';
-import { getAttendance, listIncidents, todayRiyadh, idbGet, idbSet } from '../db/idb.js';
+import { TEACHER_ROSTER, STUDENT_ROSTER, STAFF_ID_MERGES } from '../data/roster.js';
+import {
+  getAttendanceRecord,
+  saveAttendance,
+  listAttendanceRecords,
+  listIncidents,
+  todayRiyadh,
+  idbGet,
+  idbSet
+} from '../db/idb.js';
+import {
+  isWeekendDate,
+  buildMarkList,
+  countMarks,
+  shouldUploadAttendance,
+  markDirty,
+  clearDirtyIfUnchanged,
+  dirtyDates
+} from './attendanceSyncCore.js';
 import { getGoogleClientId, isGoogleConfigured } from '../auth/auth.js';
 import {
   DRIVE_FOLDERS,
@@ -19,6 +36,8 @@ import { toHrProse, toHrAction } from './hrProse.js';
 const TOKEN_LS = 'waad_ops_drive_token';
 const META_KEY = 'driveSyncMeta';
 const PENDING_KEY = 'driveSyncPending';
+/** { [YYYY-MM-DD]: seq } — days with marks not yet uploaded */
+const DIRTY_KEY = 'attendanceDirty';
 
 let tokenClient = null;
 let cachedToken = null;
@@ -217,17 +236,16 @@ function buildWebhookPayload({ kind, name, content, mimeType, date, rows, fields
 
 function parseWebhookResponse(text, name) {
   if (!text) return { ok: true, name, unverified: true };
+  let data;
   try {
-    const data = JSON.parse(text);
-    if (!data.ok) throw new Error(data.error || 'Upload relay failed');
-    return data;
-  } catch (e) {
-    if (e.message && (e.message.includes('relay') || e.message.includes('unauthorized') || e.message.includes('Upload'))) {
-      throw e;
-    }
-    // Non-JSON body (HTML echo page) — request likely reached Apps Script
+    data = JSON.parse(text);
+  } catch {
+    // Non-JSON body (HTML page) — not proof of a save; the caller verifies by reading back.
     return { ok: true, name, unverified: true };
   }
+  // A readable refusal from the server is never treated as a save.
+  if (!data || !data.ok) throw new Error((data && data.error) || 'Upload relay failed');
+  return data;
 }
 
 /**
@@ -324,26 +342,28 @@ function csvEscape(c) {
   return `"${String(c ?? '').replace(/"/g, '""')}"`;
 }
 
-export function buildAttendanceRows(date, marks) {
+export function buildAttendanceRows(date, marks, markTimes = {}) {
   return TEACHER_ROSTER.map((p) => ({
     date,
     id: p.id,
     name: p.name,
     role: p.role,
     grade: p.grade || '',
-    status: marks[p.id] || ''
+    status: marks[p.id] || '',
+    markedAt: (marks[p.id] && markTimes[p.id]) || ''
   }));
 }
 
-export function buildAttendanceCsv(date, marks) {
-  const header = ['Date', 'ID', 'Name', 'Role', 'Grade', 'Status'];
+export function buildAttendanceCsv(date, marks, markTimes = {}) {
+  const header = ['Date', 'ID', 'Name', 'Role', 'Grade', 'Status', 'MarkedAt'];
   const rows = TEACHER_ROSTER.map((p) => [
     date,
     p.id,
     p.name,
     p.role,
     p.grade || '',
-    marks[p.id] || ''
+    marks[p.id] || '',
+    (marks[p.id] && markTimes[p.id]) || ''
   ]);
   return '\uFEFF' + [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n');
 }
@@ -375,34 +395,93 @@ async function setPending(patch) {
   emit();
 }
 
-export async function syncAttendanceNow(date = todayRiyadh(), { keepalive = false } = {}) {
+async function getDirtyMap() {
+  return (await idbGet(DIRTY_KEY)) || {};
+}
+
+/** Days that have local changes waiting to upload. */
+export async function getDirtyAttendanceDates() {
+  return dirtyDates(await getDirtyMap());
+}
+
+/**
+ * Record one tap: update the mark + its own timestamp, flag the day dirty.
+ * This is the ONLY thing that makes attendance eligible for auto-upload.
+ */
+export async function recordAttendanceMark(date, personId, status) {
+  const rec = (await getAttendanceRecord(date)) || {};
+  const marks = { ...(rec.marks || {}), [personId]: status };
+  const markTimes = { ...(rec.markTimes || {}), [personId]: new Date().toISOString() };
+  await saveAttendance(date, marks, markTimes);
+  await idbSet(DIRTY_KEY, markDirty(await getDirtyMap(), date));
+  await setPending({ attendance: true });
+  return marks;
+}
+
+async function refreshAttendancePending() {
+  const left = dirtyDates(await getDirtyMap());
+  await setPending({ attendance: left.length > 0 });
+}
+
+/**
+ * Upload one day's marks — only if the day has marks, is not a weekend, and has
+ * unsent changes (or the user pressed Sync now). Returns { skipped, reason } when
+ * nothing was sent; no network request is made in that case.
+ */
+export async function syncAttendanceNow(date = todayRiyadh(), { keepalive = false, manual = false } = {}) {
   try {
-    const marks = await getAttendance(date);
-    const csv = buildAttendanceCsv(date, marks);
+    const rec = (await getAttendanceRecord(date)) || {};
+    const marks = rec.marks || {};
+    const markTimes = rec.markTimes || {};
+    const dirtyMap = await getDirtyMap();
+    const seqAtSend = dirtyMap[date];
+    const gate = shouldUploadAttendance({ date, marks, dirty: !!seqAtSend, manual });
+    if (!gate.ok) {
+      if (gate.reason !== 'not-dirty' && seqAtSend) {
+        // Nothing sendable for this day (weekend / zero marks): drop the flag.
+        await idbSet(DIRTY_KEY, clearDirtyIfUnchanged(dirtyMap, date, seqAtSend));
+      }
+      await refreshAttendancePending();
+      return { ok: true, skipped: true, reason: gate.reason, date };
+    }
+
+    const csv = buildAttendanceCsv(date, marks, markTimes);
     const name = `assembly-attendance-${date}.csv`;
     let file;
     if (hasWebhookUpload()) {
-      const rows = buildAttendanceRows(date, marks);
+      const markList = buildMarkList(marks, markTimes, TEACHER_ROSTER, rec.updatedAt);
       file = await uploadViaWebhook({
         kind: 'attendance',
         name,
         content: csv,
         mimeType: 'text/csv',
         date,
-        rows,
-        keepalive
+        rows: buildAttendanceRows(date, marks, markTimes),
+        keepalive,
+        fields: {
+          schema: 2,
+          marks: markList,
+          markedCount: countMarks(marks),
+          sentAt: new Date().toISOString()
+        }
       });
     } else {
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-      file = await uploadOrUpdateFile({
-        folderId: DRIVE_FOLDERS.dailyCsv,
-        name,
-        blob,
-        mimeType: 'text/csv'
-      });
+      // No direct-to-Drive overwrite for attendance: only the Apps Script merge path is safe.
+      // Marks stay on the phone (dirty) until the relay is configured.
+      throw new Error('Upload relay not configured — marks kept on this device');
     }
-    await setPending({ attendance: false });
+    // Saved only when the Sheet confirms it: read the day back and check every mark is there.
+    if (!keepalive) {
+      const check = await verifyDayInSheet(date, marks);
+      if (check === false) throw new Error('Not confirmed by the Sheet yet — kept on this phone, retrying');
+      if (check === null && file.unverified) throw new Error('Save not confirmed — kept on this phone, retrying');
+    } else if (file.unverified) {
+      return file; // leave-site beacon: stays dirty until a later verified sync
+    }
+    await idbSet(DIRTY_KEY, clearDirtyIfUnchanged(await getDirtyMap(), date, seqAtSend));
+    await refreshAttendancePending();
     await setMeta({
+      lastVerifiedAt: new Date().toISOString(),
       lastAttendanceAt: new Date().toISOString(),
       lastError: null,
       lastAttendanceFileId: file.fileId || file.id || file.spreadsheetId || null,
@@ -417,9 +496,22 @@ export async function syncAttendanceNow(date = todayRiyadh(), { keepalive = fals
   }
 }
 
+/** Upload every day that has unsent changes (skips weekends / empty days). */
+export async function syncPendingAttendance({ keepalive = false } = {}) {
+  const results = [];
+  for (const d of dirtyDates(await getDirtyMap())) {
+    results.push(await syncAttendanceNow(d, { keepalive }));
+  }
+  return results;
+}
+
 export async function syncBehaviorNow(date = todayRiyadh()) {
   try {
     const incidents = await listIncidents();
+    if (!incidents.length) {
+      await setPending({ behavior: false });
+      return { ok: true, skipped: true, reason: 'no-incidents' };
+    }
     const csv = buildIncidentsCsv(incidents);
     const name = `behavior-incidents-${date}.csv`;
     let file;
@@ -546,9 +638,21 @@ export async function uploadTeacherNote(payload) {
   });
 }
 
-export async function uploadAllNow() {
-  const att = await syncAttendanceNow();
-  const beh = await syncBehaviorNow();
+/**
+ * manual=true  → the user pressed an Upload / Sync button: today's marks (if any)
+ *                plus any unsent days, and behavior.
+ * manual=false → automatic (lock, back-to-home, idle): only unsent changes.
+ */
+export async function uploadAllNow({ manual = false } = {}) {
+  const pending = (await idbGet(PENDING_KEY)) || {};
+  const att = await syncPendingAttendance();
+  if (manual) {
+    const today = todayRiyadh();
+    if (!att.some((r) => r && r.date === today && !r.skipped)) {
+      att.push(await syncAttendanceNow(today, { manual: true }));
+    }
+  }
+  const beh = manual || pending.behavior ? await syncBehaviorNow() : { skipped: true, reason: 'not-dirty' };
   return { att, beh };
 }
 
@@ -564,7 +668,7 @@ export function scheduleDriveSync(kind) {
   debounceTimer = setTimeout(async () => {
     try {
       if (kind === 'behavior') await syncBehaviorNow();
-      else await syncAttendanceNow();
+      else await syncPendingAttendance();
     } catch { /* status recorded */ }
   }, 400);
   bumpIdleTimer();
@@ -576,14 +680,14 @@ export function scheduleDriveSync(kind) {
  */
 export async function flushSyncKeepalive() {
   if (!hasWebhookUpload() && !getAccessToken()) {
-    await setPending({ attendance: true, behavior: true });
     return { ok: false, skipped: true };
   }
   const pending = (await idbGet(PENDING_KEY)) || {};
   const results = {};
   try {
     if (hasWebhookUpload()) {
-      results.att = await syncAttendanceNow(todayRiyadh(), { keepalive: true });
+      // Only days with unsent marks — opening/closing the app never uploads by itself.
+      results.att = await syncPendingAttendance({ keepalive: true });
       // Behavior batch is larger; still try keepalive for pending behavior
       if (pending.behavior) {
         try {
@@ -593,7 +697,7 @@ export async function flushSyncKeepalive() {
         }
       }
     } else {
-      results.att = await syncAttendanceNow();
+      results.att = await syncPendingAttendance();
       if (pending.behavior) results.beh = await syncBehaviorNow();
     }
     return { ok: true, ...results };
@@ -604,18 +708,18 @@ export async function flushSyncKeepalive() {
   }
 }
 
-/** After 5 minutes of no taps, auto-upload pending data. */
+/** After 5 minutes of no taps, retry ONLY unsent changes (never an empty/unchanged day). */
 export function bumpIdleTimer() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(async () => {
     try {
-      const pending = (await idbGet(PENDING_KEY)) || {};
       if (!hasWebhookUpload() && !getAccessToken()) return;
-      if (pending.attendance || pending.behavior || true) {
-        // Always push current day snapshot after idle — cheap and reliable
-        await uploadAllNow();
-        toast('Uploaded to Drive (idle 5 min)');
-      }
+      const pending = (await idbGet(PENDING_KEY)) || {};
+      const dirty = dirtyDates(await getDirtyMap());
+      if (!dirty.length && !pending.behavior) return;
+      const res = await uploadAllNow();
+      const sent = (res.att || []).some((r) => r && !r.skipped) || (res.beh && !res.beh.skipped);
+      if (sent) toast('Uploaded to Drive (idle 5 min)');
     } catch (e) {
       toast(e.message || 'Idle upload failed');
     }
@@ -675,7 +779,7 @@ export async function renderSync(root) {
       <button type="button" class="btn btn-secondary" id="sync-disconnect">Disconnect</button>
     </div>
     <p class="muted" style="margin-top:12px" id="sync-msg"></p>
-    <p class="muted">Attendance syncs immediately on save; leave-site uses keepalive. Idle backup after 5 minutes.</p>
+    <p class="muted">Attendance uploads only after you mark someone (never on weekends or empty days). Unsent marks retry on leave and after 5 idle minutes.</p>
     <p class="muted"><a href="${DRIVE_LINKS.attendance || DRIVE_LINKS.dailyCsv}" target="_blank" rel="noopener">Attendance</a>
       · <a href="${DRIVE_LINKS.behavior}" target="_blank" rel="noopener">Behavior</a></p>
   `;
@@ -706,8 +810,8 @@ export async function renderSync(root) {
     msgEl.textContent = 'Uploading…';
     msgEl.className = 'muted';
     try {
-      await uploadAllNow();
-      msgEl.textContent = 'Uploaded attendance + behavior to Drive.';
+      await uploadAllNow({ manual: true });
+      msgEl.textContent = 'Uploaded to Drive (days with no marks and weekends are never uploaded).';
       msgEl.className = 'ok';
       await paint();
     } catch (e) {
@@ -737,4 +841,144 @@ export async function renderSync(root) {
 
   subscribeSyncStatus(() => paint());
   await paint();
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Oct 2026 reliability layer: the Google Sheet is the source of truth.
+ * - every tap is uploaded at once and only counts as saved after a read-back
+ * - unsent taps stay queued on the phone and retry every 30 s and when online
+ * - opening a day loads it from the Sheet, so nothing lives only on the device
+ * - old device-only history is replayed once, filling blanks only
+ * ------------------------------------------------------------------ */
+
+let serverInfoCache = null;
+export async function getServerInfo() {
+  if (serverInfoCache) return serverInfoCache;
+  const res = await fetch(DEFAULT_UPLOAD_URL, { redirect: 'follow' });
+  serverInfoCache = await res.json();
+  return serverInfoCache;
+}
+
+/** Marks stored in the Sheet for a day: { id: {status, markedAt} } — throws on network error. */
+export async function fetchServerDay(date) {
+  const u = `${DEFAULT_UPLOAD_URL}?action=attendanceDay&date=${encodeURIComponent(date)}&token=${encodeURIComponent(DEFAULT_UPLOAD_TOKEN)}`;
+  const res = await fetch(u, { redirect: 'follow' });
+  const data = await res.json();
+  if (!data || !data.ok || !Array.isArray(data.marks)) return null; // server without read-back support
+  const out = {};
+  for (const m of data.marks) out[m.id] = { status: m.status, markedAt: m.markedAt || '' };
+  return out;
+}
+
+/** true = every local mark is in the Sheet; false = something missing; null = cannot check. */
+export async function verifyDayInSheet(date, marks) {
+  let server;
+  try {
+    server = await fetchServerDay(date);
+  } catch {
+    return null;
+  }
+  if (!server) return null;
+  for (const [id, st] of Object.entries(marks || {})) {
+    if (!st) continue;
+    const cid = STAFF_ID_MERGES[id] || id;
+    if (!server[cid] || !server[cid].status) return false;
+  }
+  return true;
+}
+
+/**
+ * Load the day from the Sheet into the phone. Server statuses win, except for marks
+ * on this phone that have not been confirmed yet (those are still queued to upload).
+ */
+export async function pullServerDay(date) {
+  const server = await fetchServerDay(date);
+  if (!server) return null;
+  const rec = (await getAttendanceRecord(date)) || {};
+  const marks = { ...(rec.marks || {}) };
+  const markTimes = { ...(rec.markTimes || {}) };
+  const dirty = !!(await getDirtyMap())[date];
+  let changed = false;
+  for (const [id, v] of Object.entries(server)) {
+    if (!v.status) continue;
+    if (dirty && marks[id]) continue; // unsent local tap — it will be uploaded
+    if (marks[id] !== v.status) {
+      marks[id] = v.status;
+      if (v.markedAt) markTimes[id] = v.markedAt;
+      changed = true;
+    }
+  }
+  if (changed) await saveAttendance(date, marks, markTimes);
+  return marks;
+}
+
+/** Fold retired IDs (t42 -> t01) in every local day; the kept record wins, the old one only fills a blank. */
+async function migrateLocalStaffIds() {
+  for (const rec of await listAttendanceRecords()) {
+    const marks = { ...(rec.marks || {}) };
+    const times = { ...(rec.markTimes || {}) };
+    let changed = false;
+    for (const [oldId, newId] of Object.entries(STAFF_ID_MERGES)) {
+      if (!(oldId in marks)) continue;
+      if (!marks[newId] && marks[oldId]) {
+        marks[newId] = marks[oldId];
+        if (times[oldId]) times[newId] = times[oldId];
+      }
+      delete marks[oldId];
+      delete times[oldId];
+      changed = true;
+    }
+    if (changed) await saveAttendance(rec.date, marks, times);
+  }
+}
+
+const REPLAY_KEY = 'legacyReplayV4';
+/**
+ * One-time: send every day stored on this phone to the Sheet with fillOnly=true, so days that
+ * were wiped in Drive (e.g. 27 Sep, 4 Oct, 19 Oct) get their statuses back without overriding
+ * anything already in the Sheet. Runs only against a server that supports fillOnly (v4+).
+ */
+export async function replayLocalHistoryOnce() {
+  const done = (await idbGet(REPLAY_KEY)) || {};
+  let info;
+  try { info = await getServerInfo(); } catch { return { skipped: 'offline' }; }
+  if (!info || Number(info.attendanceMerge) < 4) return { skipped: 'server-not-ready' };
+  await migrateLocalStaffIds();
+  const today = todayRiyadh();
+  const results = [];
+  for (const rec of await listAttendanceRecords()) {
+    const d = rec.date;
+    if (done[d] || d > today || isWeekendDate(d) || countMarks(rec.marks) === 0) continue;
+    try {
+      const markList = buildMarkList(rec.marks, rec.markTimes || {}, TEACHER_ROSTER, rec.updatedAt);
+      const r = await uploadViaWebhook({
+        kind: 'attendance',
+        name: `assembly-attendance-${d}.csv`,
+        content: '',
+        mimeType: 'text/csv',
+        date: d,
+        fields: { schema: 2, marks: markList, fillOnly: true, replay: 'device-history-v4', sentAt: new Date().toISOString() }
+      });
+      if (r && !r.unverified) { done[d] = new Date().toISOString(); results.push({ date: d, applied: r.applied || 0 }); }
+    } catch (e) {
+      results.push({ date: d, error: e.message || String(e) });
+    }
+  }
+  await idbSet(REPLAY_KEY, done);
+  return { results };
+}
+
+let retryTimer = null;
+/** Keep retrying queued taps: every 30 s while anything is pending, and as soon as the phone is back online. */
+export function startReliableSync() {
+  const tick = async () => {
+    try {
+      if ((await getDirtyAttendanceDates()).length) await syncPendingAttendance();
+    } catch { /* stays queued; next tick retries */ }
+  };
+  if (!retryTimer) retryTimer = setInterval(tick, 30000);
+  if (typeof window !== 'undefined') window.addEventListener('online', tick);
+  replayLocalHistoryOnce().catch(() => {});
+  tick();
 }

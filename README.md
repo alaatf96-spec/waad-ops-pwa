@@ -130,7 +130,7 @@ Folders:
    - `http://localhost:5173` (dev)
 3. Set repo secret `VITE_GOOGLE_CLIENT_ID` (same client ID) so Pages builds bake it in.
 4. On phone: open app → **Sync** → **Connect Google Drive** (allowlist still `a.ferjani@waadacademy.edu.sa` for sign-in).
-5. Mark attendance; after ~8s it uploads, or tap **Sync attendance now**.
+5. Mark attendance; each tap uploads that change (never on Fri/Sat or for an empty day). See `docs/ATTENDANCE_SYNC_FIX.md`.
 
 Without the client ID in the build, device unlock still works; Sync tab explains the missing config.
 

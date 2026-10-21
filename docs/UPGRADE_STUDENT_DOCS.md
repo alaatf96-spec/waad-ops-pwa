@@ -5,7 +5,7 @@ Webhook: `upgrade-student-docs` (requires Apps Script **redeploy** after pulling
 Preserves + dedupes incident/log rows; rebuilds **body-first stats dashboard** (profile grid, KPI chips, Charts-service bar PNGs from live rows, Venn/radar images, color-coded timeline). Header is a small real campus strip only.
 
 ```bash
-TOKEN='r-M-LW1rIuLxESItwMg10v13SYr0P7aH'
+TOKEN="$WAAD_UPLOAD_TOKEN"  # same value as Script Property UPLOAD_TOKEN - never commit it
 URL='https://script.google.com/macros/s/…/exec'
 OFFSET=0
 LIMIT=30

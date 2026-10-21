@@ -62,11 +62,37 @@ export async function getAttendance(date) {
   });
 }
 
-export async function saveAttendance(date, marks) {
+/** Full day record { date, marks, markTimes, updatedAt } or null */
+export async function getAttendanceRecord(date) {
+  const store = await tx('attendance');
+  return new Promise((resolve, reject) => {
+    const req = store.get(date);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Save the day's marks. markTimes (id -> ISO time of each mark) is kept so the
+ * server can merge per person by latest timestamp. Omitting it keeps existing times.
+ */
+export async function saveAttendance(date, marks, markTimes) {
+  const prev = markTimes ? null : await getAttendanceRecord(date);
+  const times = markTimes || prev?.markTimes || {};
   const store = await tx('attendance', 'readwrite');
   return new Promise((resolve, reject) => {
-    const req = store.put({ date, marks, updatedAt: new Date().toISOString() });
+    const req = store.put({ date, marks, markTimes: times, updatedAt: new Date().toISOString() });
     req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/** Every locally stored attendance day record. */
+export async function listAttendanceRecords() {
+  const store = await tx('attendance');
+  return new Promise((resolve, reject) => {
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result || []);
     req.onerror = () => reject(req.error);
   });
 }

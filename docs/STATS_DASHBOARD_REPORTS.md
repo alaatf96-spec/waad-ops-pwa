@@ -48,7 +48,7 @@
 2. Replace `WaadOpsUpload.gs` from repo `main` → Save → Deploy → Manage deployments → New version.
 3. Sample after redeploy:
 ```bash
-TOKEN='r-M-LW1rIuLxESItwMg10v13SYr0P7aH'
+TOKEN="$WAAD_UPLOAD_TOKEN"  # same value as Script Property UPLOAD_TOKEN - never commit it
 URL='https://script.google.com/macros/s/AKfycbzYopYxUwQScYVE3fODZ4oHQ3xfoc9hTr0yCpSOZZ122Xvkys_s1TSY1QPgdRE8uE-fYg/exec'
 # Yahya
 curl -sS -X POST "$URL" -H 'Content-Type: application/json' \

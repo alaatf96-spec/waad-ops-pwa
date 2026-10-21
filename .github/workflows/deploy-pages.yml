@@ -29,6 +29,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test (attendance sync safety)
+        run: npm test
+
+      - name: Check upload token secret
+        env:
+          VITE_DRIVE_UPLOAD_TOKEN: ${{ secrets.VITE_DRIVE_UPLOAD_TOKEN }}
+        run: |
+          if [ -z "$VITE_DRIVE_UPLOAD_TOKEN" ]; then
+            echo "::warning::Secret VITE_DRIVE_UPLOAD_TOKEN is empty — Drive sync will be disabled in this build (marks stay on the phone)."
+          fi
+
       - name: Build
         run: npm run build
         env:

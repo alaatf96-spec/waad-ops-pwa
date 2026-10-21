@@ -1,10 +1,12 @@
 import { TEACHER_ROSTER } from '../data/roster.js';
-import { getAttendance, saveAttendance, todayRiyadh, formatRiyadhDisplay } from '../db/idb.js';
+import { getAttendance, todayRiyadh, formatRiyadhDisplay } from '../db/idb.js';
 import {
   syncAttendanceNow,
   scheduleDriveSync,
+  recordAttendanceMark,
   subscribeSyncStatus,
-  getSyncStatus
+  getSyncStatus,
+  pullServerDay
 } from '../sync/driveSync.js';
 import { t, getLang } from '../i18n/index.js';
 
@@ -122,7 +124,7 @@ export async function renderAttendance(root) {
     }
   }
 
-  async function runSync({ quiet = false } = {}) {
+  async function runSync({ quiet = false, manual = false } = {}) {
     if (syncing) {
       syncQueued = true;
       return;
@@ -131,15 +133,19 @@ export async function renderAttendance(root) {
     syncNowBtn.disabled = true;
     await paintSync();
     try {
+      let res;
       do {
         syncQueued = false;
-        await syncAttendanceNow(date);
+        res = await syncAttendanceNow(date, { manual });
       } while (syncQueued);
-      if (!quiet) toast(t('synced'));
+      if (res && res.skipped) {
+        if (!quiet && res.reason === 'weekend') toast('Weekend — attendance is not uploaded on Fri/Sat.');
+        else if (!quiet && res.reason === 'no-marks') toast('Nothing marked yet — nothing to upload.');
+      } else toast(quiet ? t('savedToSheet') : t('synced'));
       await paintSync();
     } catch (e) {
       scheduleDriveSync('attendance');
-      toast(e.message || t('syncFailed'), true);
+      toast(`${t('notSavedYet')} ${e.message ? '(' + e.message.slice(0, 60) + ')' : ''}`, true);
       await paintSync();
     } finally {
       syncing = false;
@@ -167,6 +173,16 @@ export async function renderAttendance(root) {
     dateLabel.textContent = formatRiyadhDisplay(date, getLang());
     paint();
     await paintSync();
+    // The Sheet is the source of truth: load what is stored there for this day.
+    try {
+      const fromSheet = await pullServerDay(date);
+      if (fromSheet && date === d) {
+        marks = fromSheet;
+        paint();
+      }
+    } catch {
+      /* offline: show what is on the phone; queued taps still upload later */
+    }
   }
 
   function paint() {
@@ -209,10 +225,10 @@ export async function renderAttendance(root) {
         b.className = `btn status-btn ${st.cls}${current === st.key ? ' is-active' : ''}`;
         b.textContent = t(st.labelKey);
         b.addEventListener('click', async () => {
-          marks = { ...marks, [person.id]: st.key };
-          await saveAttendance(date, marks);
+          // Saves the mark with its own timestamp and flags the day as changed.
+          marks = await recordAttendanceMark(date, person.id, st.key);
           paint();
-          // Immediate Drive sync on every mark (no 8s wait)
+          // Upload this change (skipped automatically on weekends).
           await runSync({ quiet: true });
         });
         btns.appendChild(b);
@@ -227,7 +243,7 @@ export async function renderAttendance(root) {
   });
 
   wrap.querySelector('#att-today').addEventListener('click', () => reload(todayRiyadh()));
-  syncNowBtn.addEventListener('click', () => runSync({ quiet: false }));
+  syncNowBtn.addEventListener('click', () => runSync({ quiet: false, manual: true }));
 
   const unsub = subscribeSyncStatus((s) => paintSync(s));
   wrap.addEventListener(

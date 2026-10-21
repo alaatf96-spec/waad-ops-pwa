@@ -1,5 +1,7 @@
 /** English UI strings — Waad Ops */
 export default {
+  savedToSheet: 'Saved to Sheet ✓',
+  notSavedYet: 'Not saved yet — kept on this phone and retrying automatically.',
   appName: 'Waad Ops',
   tagline: 'Assembly · Behavior · Teachers',
   lock: 'Lock',
