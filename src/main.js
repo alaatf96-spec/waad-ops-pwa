@@ -139,7 +139,7 @@ async function showLock(errMsg) {
   app.innerHTML = `
     <div class="lock-screen">
       <div class="logo-row">
-        <div class="brand-mark">W</div>
+        <img class="brand-logo-full" src="${import.meta.env.BASE_URL}waad-header.png" alt="Waad Academy" />
         <div>
           <h1>${t('appName')}</h1>
           <p class="sub" style="margin:0;opacity:.85">${t('tagline')}</p>
@@ -217,7 +217,7 @@ async function showApp() {
   app.innerHTML = `
     <header class="app-header">
       <button type="button" class="brand-home" id="btn-brand-home" title="${t('home')}">
-        <div class="brand-mark">W</div>
+        <img class="brand-logo" src="${import.meta.env.BASE_URL}waad-logo.png" alt="Waad Academy" />
         <div class="brand-text">
           <h1>${t('appName')}</h1>
           <p class="sub">${escapeHtml(session?.name || 'Ops')}</p>
