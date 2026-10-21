@@ -93,8 +93,11 @@ function checkUploadTokenConfigured() {
  * Teacher: Girls Section façade same campus (352/2591).
  * Source URLs: see docs/assets/campus/SOURCES.md
  */
-var WAAD_HEADER_IMAGE_ID = '1xqxXrdYQggay-bcygNB3-Vk9-AhDpPxO'; // Real campus student strip
-var WAAD_TEACHER_HEADER_IMAGE_ID = '1iRjTW8fpqdANiu9JpO1gAbK60Q8zBWjr'; // Real campus teacher strip
+/** Official Waad header (logo + accreditations), from the G4-7 Spelling Bee template, Oct 2026. 1123x190. */
+var WAAD_OFFICIAL_HEADER_IMAGE_ID = '1PQu-aqkquFpog8_RpW69RVwziqgdirp-';
+var WAAD_HEADER_IMAGE_ID = WAAD_OFFICIAL_HEADER_IMAGE_ID;
+var WAAD_TEACHER_HEADER_IMAGE_ID = WAAD_OFFICIAL_HEADER_IMAGE_ID;
+var WAAD_LEGACY_CAMPUS_STRIP_ID = '1xqxXrdYQggay-bcygNB3-Vk9-AhDpPxO'; // old campus photo strip (unused)
 /** Official exam banner (owned) — optional logo-style fallback */
 var WAAD_EXAM_BANNER_IMAGE_ID = '1r57zhJMc886XYtOvHP5zRTs5ynAggxh1';
 /** Dashboard chart templates (matplotlib) — inserted + Charts-service regen on upgrade */
@@ -136,7 +139,7 @@ function insertBrandedHeaderImage_(body, kind) {
   try {
     var blob = DriveApp.getFileById(id).getBlob();
     // Minimal strip — ~full width, short height (secondary to dashboard body)
-    body.appendImage(blob).setWidth(520).setHeight(72);
+    body.appendImage(blob).setWidth(520).setHeight(88); // keeps 1123:190 aspect
     return true;
   } catch (eImg) {
     try {
@@ -444,6 +447,8 @@ function doGet(e) {
     healthSnapshots: true,
     listFolder: true,
     attendanceMerge: 4,
+    officialHeader: true,
+    nightlyTrigger: (function () { try { return ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'nightlyAttendanceBackup'; }).length; } catch (e) { return 'unknown'; } })(),
     attendanceReadBack: true,
     staffCanon: true,
     nightlyBackup: true,

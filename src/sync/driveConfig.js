@@ -37,5 +37,5 @@ export const DEFAULT_UPLOAD_TOKEN = (import.meta.env.VITE_DRIVE_UPLOAD_TOKEN || 
 
 export const IDLE_UPLOAD_MS = 5 * 60 * 1000;
 
-/** Drive image for Apps Script Doc header (Waad Exam Header Banner.png) */
-export const WAAD_HEADER_IMAGE_ID = '1r57zhJMc886XYtOvHP5zRTs5ynAggxh1';
+/** Drive image for Apps Script Doc header (official Waad header, Oct 2026) */
+export const WAAD_HEADER_IMAGE_ID = '1PQu-aqkquFpog8_RpW69RVwziqgdirp-';
